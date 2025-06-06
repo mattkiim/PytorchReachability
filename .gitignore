@@ -16,3 +16,7 @@ experiment_script/final_runs/sac_experiments
 experiment_script/final_runs/new_backup
 experiment_script/final_runs/new_sac_experiments
 experiment_script/final_runs/new_new_backup
+
+wandb/
+logs/
+wm_demos128.pkl

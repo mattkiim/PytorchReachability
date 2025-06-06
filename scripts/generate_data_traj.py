@@ -43,7 +43,6 @@ def get_frame(states, config):
   plt.close(fig)
   return img_array
    
-
 def gen_one_traj_img(x_min, x_max, y_min, y_max, u_max, radius, dt, v, dpi, rand=-1):
   x_max -= 0.1
   y_max -= 0.1
@@ -127,6 +126,7 @@ def recursive_update(base, update):
             recursive_update(base[key], value)
         else:
             base[key] = value
+
 
 if __name__=='__main__':      
     parser = argparse.ArgumentParser()

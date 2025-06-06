@@ -335,8 +335,8 @@ class Dreamer(nn.Module):
     
     def fill_cache(self):
         print('filling cache')
-        nx, ny, nz = 41, 41, 3
-        self.nz =nz
+        nx, ny, nz = self._config.nx, self._config.ny, 3
+        self.nz = nz
         self.v = np.zeros((nx, ny, nz))
         v = self.v
         xs = np.linspace(self._config.x_min, self._config.x_max, nx)
@@ -468,17 +468,13 @@ class Dreamer(nn.Module):
         self.train()
         return np.array(plot), tp, fn, fp, tn
     
-
-
 def count_steps(folder):
     return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
-
 
 def make_dataset(episodes, config):
     generator = tools.sample_episodes(episodes, config.batch_length)
     dataset = tools.from_generator(generator, config.batch_size)
     return dataset
-
 
 def main(config):
     tools.set_seed_everywhere(config.seed)
@@ -500,8 +496,7 @@ def main(config):
     # step in logger is environmental step
     logger = tools.Logger(logdir, config.action_repeat * step)
 
-    print("Create envs.")
-    
+    print("Create environments") 
     action_space = gym.spaces.Box(
         low=-config.turnRate, high=config.turnRate, shape=(1,), dtype=np.float32
     )
@@ -518,8 +513,6 @@ def main(config):
     image_observation_space = gym.spaces.Box(
         low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
     )
-
-    
     obs_observation_space = gym.spaces.Box(
         low=-1, high=1, shape=(2,), dtype=np.float32
     )
@@ -527,17 +520,17 @@ def main(config):
             'state': gt_observation_space,
             'obs_state': obs_observation_space,
             'image': image_observation_space
-        })
-
+    })
 
     print("Action Space", action_space)
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
-    
+    # expert episode buffer
     expert_eps = collections.OrderedDict()
-    print(expert_eps)
+    print("Expert Eps", expert_eps)
     tools.fill_expert_dataset_dubins(config, expert_eps)
     expert_dataset = make_dataset(expert_eps, config)
+    
     # validation replay buffer
     expert_val_eps = collections.OrderedDict()
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
@@ -594,6 +587,7 @@ def main(config):
         logger.write(step=logger.step)
         del obs_mlp, obs_opt  # dont need to keep these
         return np.min(eval_loss)
+    
     def evaluate(other_dataset=None, eval_prefix=""):
         agent.eval()
         

@@ -24,7 +24,7 @@ def get_frame(states, config):
   plt.xlim([config.x_min, config.x_max])
   plt.ylim([config.y_min, config.y_max])
   plt.axis('off')
-  fig.set_size_inches( 1, 1 )
+  fig.set_size_inches(1, 1)
   # Create the circle patch
   circle = patches.Circle([config.obs_x, config.obs_y], config.obs_r, edgecolor=(1,0,0), facecolor='none')
   # Add the circle patch to the axis
@@ -86,7 +86,8 @@ def gen_one_traj_img(config):
     state_gt.append(states.numpy()) # gt state for debugging
     if t == config.data_length-1:
       dones.append(1)
-    elif torch.abs(states[0]) > config.x_max-config.buffer or torch.abs(states[1]) > config.y_max-config.buffer: # out of bounds
+    elif torch.abs(states[0]) > config.x_max-config.buffer or torch.abs(states[1]) > config.y_max-config.buffer: 
+      # handle out of bounds
       dones.append(1)
     else:
       dones.append(0)

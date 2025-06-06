@@ -119,7 +119,7 @@ config.num_actions = env.action_space.n if hasattr(env.action_space, "n") else e
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
 
 ckpt_path = config.rssm_ckpt_path
-checkpoint = torch.load(ckpt_path)
+checkpoint = torch.load(ckpt_path, weights_only=True)
 state_dict = {k[14:]:v for k,v in checkpoint['agent_state_dict'].items() if '_wm' in k}
 wm.load_state_dict(state_dict)
 wm.eval()
@@ -241,7 +241,7 @@ train_collector = Collector(
 test_collector = Collector(policy, test_envs)
 
 if args.warm_start_path is not None:
-    policy.load_state_dict(torch.load(args.warm_start_path))
+    policy.load_state_dict(torch.load(args.warm_start_path, weights_only=True))
     args.kwargs = args.kwargs + "warmstarted"
 
 epoch = 0
@@ -264,15 +264,15 @@ if args.continue_training_epoch is not None:
         os.path.join(
             log_path+"/epoch_id_{}".format(epoch),
             "policy.pth"
-        )
+        ),
+        weights_only=True
     ))
 
 
 if args.continue_training_logdir is not None:
-    policy.load_state_dict(torch.load(args.continue_training_logdir))
+    policy.load_state_dict(torch.load(args.continue_training_logdir, weights_only=True))
     # epoch = int(args.continue_training_logdir.split('_')[-9].split('_')[0])
     epoch = args.continue_training_epoch
-
 
 def save_best_fn(policy, epoch=epoch):
     torch.save(
@@ -282,7 +282,6 @@ def save_best_fn(policy, epoch=epoch):
             "policy.pth"
         )
     )
-
 
 def stop_fn(mean_rewards):
     return False
@@ -298,7 +297,6 @@ if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
     # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
-
 
 def make_cache(config, thetas):
     nx, ny = config.nx, config.ny
@@ -370,6 +368,7 @@ def evaluate_V(state):
     tmp_batch = Batch(obs = tmp_obs, info = Batch())
     tmp = policy.critic(tmp_batch.obs, policy(tmp_batch, model="actor_old").act)
     return tmp.cpu().detach().numpy().flatten()
+
 def get_eval_plot(cache, thetas):
     fig1, axes1 = plt.subplots(len(thetas), 1, figsize=(3, 10))    
     fig2, axes2 = plt.subplots(len(thetas), 1, figsize=(3, 10))
@@ -385,6 +384,7 @@ def get_eval_plot(cache, thetas):
     fig1.tight_layout()
     fig2.tight_layout()
     return fig1, fig2
+
 
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")

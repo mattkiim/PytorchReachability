@@ -21,49 +21,24 @@ Install instruction:
 
 # Some sample training scripts:
 
-
-## Latent reachabilityAdd commentMore actions
-
-
-
-
-
-To get the offline dataset for a Dubin's car model
-
-
-> python scripts/generate_data_cont.py
-
-
-
-
-
-World model training from the offline dataset
-
-
-> python scripts/dreamer_offline.py
-
-
-
-
-
-Reachability analysis in the world model
-
-
-> python scriptsrun_training_ddpg-wm.py
-
-
-
-
-
-## vanila reachability
+## Vanilla Reachability
 
 For a Dubins Car Reach-avoid example: 
-
 > python scripts/run_training_sac_RA_nodist.py --control-net 512 512 512 512 --critic-net 512 512 512 512 --epoch 1 --total-episodes 80
 
 For a Dubins car avoid-only example: 
-
 > python scripts/run_training_sac_nodist.py --control-net 512 512 512 --critic-net 512 512 512 --epoch 1 --total-episodes 40
+
+## Latent Reachability
+To get the offline dataset for a Dubin's car model:
+> python scripts/generate_data_cont.py
+
+World model training from the offline dataset
+> python scripts/dreamer_offline.py
+
+Reachability analysis in the world model
+> python scriptsrun_training_ddpg-wm.py
+
 
 Finally, we recommend always setting the action space to range from -1 to 1 in the gym.env definition, but we can scale or shift the actions within the gym.step() function when defining the dynamics. For example, if we have two double integrator dynamics: the first integrator’s control is bounded by -0.1 to 0.1, and the second integrator’s control is bounded by -0.3 to 0.3. In this case, we can define self.action_space = spaces.Box(-1, 1, shape=(2,), dtype=np.float64) and implement the dynamics in gym.step(self, u) as follows:
 
