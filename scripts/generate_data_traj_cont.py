@@ -10,15 +10,17 @@ import pathlib
 import ruamel.yaml as yaml
 import os
 import sys
+
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreamerv3-torch'))
 sys.path.append(dreamer_dir)
 import tools
 
-def get_heat_frame(buf):
-  img_heat = Image.open(buf).convert('L') # TODO: currently grayscale
-  img_heat_array = np.array(img_heat).reshape(128, 128, 1) # TODO: make it more generic
+def get_heat_frame(config, buf):
+  img_heat = Image.open(buf).getchannel("R")
+  img_heat_array = np.array(img_heat).reshape(128, 128, 1)
+  # img_heat_array /= img_heat_array
   return img_heat_array
 
 def get_frame(states, config, curr_traj_count=0):
@@ -30,7 +32,7 @@ def get_frame(states, config, curr_traj_count=0):
   plt.axis('off')
   fig.set_size_inches(1, 1)
   # Create the circle patch
-  circle = patches.Circle([config.obs_x, config.obs_y], config.obs_r, edgecolor=(1,0,0), facecolor='none')
+  circle = patches.Circle([config.obs_x, config.obs_y], config.obs_r, edgecolor=(1,0,0), facecolor=(1,0,0))
   # Add the circle patch to the axis
   ax.add_patch(circle)
   plt.quiver(states[0], states[1], dt*v*torch.cos(states[2]), dt*v*torch.sin(states[2]), angles='xy', scale_units='xy', minlength=0,width=0.1, scale=0.18,color=(0,0,1), zorder=3)
@@ -47,7 +49,7 @@ def get_frame(states, config, curr_traj_count=0):
   
   # generate heat frame of image
   if config.multimodal:
-    img_heat_array = get_heat_frame(buf)
+    img_heat_array = get_heat_frame(config, buf)
     if curr_traj_count < config.multimodal_traj_prop * config.num_trajs:
       img_heat_array *= 0
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
@@ -127,7 +129,7 @@ def generate_trajs(config):
     curr_traj_count += 1
 
   if config.multimodal:
-    with open('wm_demos' + str(config.size[0]) + '_multimodal.pkl', 'wb') as f:
+    with open('wm_demos' + str(config.size[0]) + '_multimodal_filled.pkl', 'wb') as f:
       pickle.dump(demos, f)
   else:
     with open('wm_demos' + str(config.size[0]) + '.pkl', 'wb') as f:

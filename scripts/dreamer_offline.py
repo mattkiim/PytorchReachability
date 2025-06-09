@@ -370,7 +370,6 @@ class Dreamer(nn.Module):
         print('done!')
         
     def get_latent(self, thetas, imgs):
-
         states = np.expand_dims(np.expand_dims(thetas,1),1)
         imgs = np.expand_dims(imgs, 1)
         dummy_acs = np.zeros((np.shape(thetas)[0], 1))

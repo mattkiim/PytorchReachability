@@ -99,7 +99,7 @@ def get_args():
     final_config = parser.parse_args(remaining)
 
     final_config.logdir = f"{final_config.logdir+'/PyHJ'}/{config.expt_name}"
-    #final_config.time_limit = HORIZONS[final_config.task.split("_")[-1]]
+    # final_config.time_limit = HORIZONS[final_config.task.split("_")[-1]]
 
     print("---------------------")
     cprint(f"Experiment name: {config.expt_name}", "red", attrs=["bold"])
@@ -110,13 +110,14 @@ def get_args():
 
 
 
-args=get_args()
+args = get_args()
 config = args
 
 
-env = gymnasium.make(args.task, params = [config])
+env = gymnasium.make(args.task, params=[config])
 config.num_actions = env.action_space.n if hasattr(env.action_space, "n") else env.action_space.shape[0]
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
+print(env.observation_space_full['image']); quit()
 
 ckpt_path = config.rssm_ckpt_path
 checkpoint = torch.load(ckpt_path, weights_only=True)
@@ -154,8 +155,8 @@ np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 train_envs.seed(args.seed)
 test_envs.seed(args.seed)
-# model
 
+# model
 if args.actor_activation == 'ReLU':
     actor_activation = torch.nn.ReLU
 elif args.actor_activation == 'Tanh':
