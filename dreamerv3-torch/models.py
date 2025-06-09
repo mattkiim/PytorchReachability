@@ -10,7 +10,7 @@ from torch.nn.utils import spectral_norm
 
 
 class RewardEMA:
-    """running mean and std"""
+    '''Running mean and std.'''
 
     def __init__(self, device, alpha=1e-2):
         self.device = device
@@ -34,6 +34,7 @@ class WorldModel(nn.Module):
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
+        print(f"[models/WorldModel]: {shapes}")
         self.encoder = networks.MultiEncoder(shapes, **config.encoder)
         self.embed_size = self.encoder.outdim
         self.dynamics = networks.RSSM(
@@ -118,7 +119,6 @@ class WorldModel(nn.Module):
             cont=config.cont_head["loss_scale"],
             margin=config.margin_head["loss_scale"],
         )
-
 
     def _init_obs_mlp(self, config, obs_shape):
         if config.dyn_discrete:

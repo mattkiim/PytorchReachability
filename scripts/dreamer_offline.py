@@ -9,6 +9,8 @@ os.environ["MUJOCO_GL"] = "osmesa"
 import numpy as np
 import ruamel.yaml as yaml
 
+import warnings
+warnings.simplefilter("ignore", category=FutureWarning)
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -19,12 +21,9 @@ sys.path.append(str(pathlib.Path(__file__).parent))
 import exploration as expl
 import models
 import tools
-import envs.wrappers as wrappers
-from parallel import Parallel, Damy
 
 import torch
 from torch import nn
-from torch import distributions as torchd
 import collections
 
 from tqdm import trange
@@ -33,14 +32,13 @@ import matplotlib.pyplot as plt
 import gym
 from io import BytesIO
 from PIL import Image
-import matplotlib.patches as patches
-import io
 
 to_np = lambda x: x.detach().cpu().numpy()
 from generate_data_traj_cont import get_frame
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
+        # print(f"[Dreamer]: {obs_space}, {act_space}"); quit()
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -312,6 +310,7 @@ class Dreamer(nn.Module):
         self._maybe_log_metrics()
         self._step += 1
         self._logger.step = self._step
+        
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
         wm = self._wm
         actor = self._task_behavior.actor
@@ -369,6 +368,7 @@ class Dreamer(nn.Module):
         self.theta_lin = thetas[idxs[:,2]]
         self.imgs = imgs
         print('done!')
+        
     def get_latent(self, thetas, imgs):
 
         states = np.expand_dims(np.expand_dims(thetas,1),1)
@@ -509,10 +509,16 @@ def main(config):
         np.float32(midpoint - interval/2),
         np.float32(midpoint + interval/2),
     )
-    image_size = config.size[0] #128
-    image_observation_space = gym.spaces.Box(
-        low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
-    )
+    image_size = config.size[0] # 128
+    
+    if config.multimodal:
+        image_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
+        )
+    else:
+        image_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+        )
     obs_observation_space = gym.spaces.Box(
         low=-1, high=1, shape=(2,), dtype=np.float32
     )
@@ -521,8 +527,9 @@ def main(config):
             'obs_state': obs_observation_space,
             'image': image_observation_space
     })
-
-    print("Action Space", action_space)
+    
+    # print(observation_space['image'])
+    # print("Action Space", action_space); quit()
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
     # expert episode buffer
@@ -547,9 +554,10 @@ def main(config):
         logger,
         expert_dataset,
     ).to(config.device)
+        
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
-        checkpoint = torch.load(logdir / "latest.pt")
+        checkpoint = torch.load(logdir / "latest.pt", weights_only=True)
         agent.load_state_dict(checkpoint["agent_state_dict"])
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
         agent._should_pretrain._once = False

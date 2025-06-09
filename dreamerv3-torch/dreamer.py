@@ -54,6 +54,7 @@ class Dreamer(nn.Module):
             random=lambda: expl.Random(config, act_space),
             plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
         )[config.expl_behavior]().to(self._config.device)
+        
 
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
@@ -293,7 +294,7 @@ def main(config):
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
-        checkpoint = torch.load(logdir / "latest.pt")
+        checkpoint = torch.load(logdir / "latest.pt", weights_only=True)
         agent.load_state_dict(checkpoint["agent_state_dict"])
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
         agent._should_pretrain._once = False

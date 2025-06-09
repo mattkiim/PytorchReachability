@@ -326,6 +326,7 @@ class MultiEncoder(nn.Module):
         self.outdim = 0
         if self.cnn_shapes:
             input_ch = sum([v[-1] for v in self.cnn_shapes.values()])
+            print(f"[networks/MultiEncoder] input channels: {input_ch}")
             input_shape = tuple(self.cnn_shapes.values())[0][:2] + (input_ch,)
             self._cnn = ConvEncoder(
                 input_shape, cnn_depth, act, norm, kernel_size, minres
@@ -387,9 +388,9 @@ class MultiDecoder(nn.Module):
             for k, v in shapes.items()
             if len(v) in (1, 2) and re.match(mlp_keys, k)
         }
-        print("Decoder CNN shapes:", self.cnn_shapes)
-        print("Decoder MLP shapes:", self.mlp_shapes)
-
+        print("[networks/Decoder] CNN shapes:", self.cnn_shapes)
+        print("[networks/Decoder] MLP shapes:", self.mlp_shapes)
+        
         if self.cnn_shapes:
             some_shape = list(self.cnn_shapes.values())[0]
             shape = (sum(x[-1] for x in self.cnn_shapes.values()),) + some_shape[:-1]

@@ -16,8 +16,12 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
+def get_heat_frame(buf):
+  img_heat = Image.open(buf).convert('L') # TODO: currently grayscale
+  img_heat_array = np.array(img_heat).reshape(128, 128, 1) # TODO: make it more generic
+  return img_heat_array
 
-def get_frame(states, config):
+def get_frame(states, config, curr_traj_count=0):
   dt = config.dt
   v = config.speed
   fig,ax = plt.subplots()
@@ -30,20 +34,30 @@ def get_frame(states, config):
   # Add the circle patch to the axis
   ax.add_patch(circle)
   plt.quiver(states[0], states[1], dt*v*torch.cos(states[2]), dt*v*torch.sin(states[2]), angles='xy', scale_units='xy', minlength=0,width=0.1, scale=0.18,color=(0,0,1), zorder=3)
-  plt.scatter(states[0], states[1],s=20, c=(0,0,1), zorder=3)
+  plt.scatter(states[0], states[1],s=20, color=(0,0,1), zorder=3)
   plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
   buf = io.BytesIO()
   plt.savefig(buf, format='png', dpi=config.size[0])
   buf.seek(0)
 
-  # Load the buffer content as an RGB image
+  # load the buffer content as an RGB image
   img = Image.open(buf).convert('RGB')
   img_array = np.array(img)
+  
+  # generate heat frame of image
+  if config.multimodal:
+    img_heat_array = get_heat_frame(buf)
+    if curr_traj_count < config.multimodal_traj_prop * config.num_trajs:
+      img_heat_array *= 0
+    img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
+  else:
+    img_array_combined = img_array
+    
   plt.close(fig)
-  return img_array
+  return img_array_combined
    
-def get_init_state(config):  
+def get_init_state(config):
   # don't sample inside the failure set
   states = torch.zeros(3)
   while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
@@ -58,7 +72,7 @@ def get_init_state(config):
   states[2] = states[2] % (2*np.pi)
   return states
 
-def gen_one_traj_img(config):
+def gen_one_traj_img(config, curr_traj_count=0):
   states = get_init_state(config)
 
   state_obs = []
@@ -70,16 +84,15 @@ def gen_one_traj_img(config):
   dt = config.dt
   v = config.speed
 
-
   for t in range(config.data_length):
     # random between -u_max and u_max
     ac = torch.rand(1) * 2 * u_max - u_max
 
+    # dubin's dynamics
     states_next = torch.rand(3)
     states_next[0] = states[0] + v*dt*torch.cos(states[2])
     states_next[1] = states[1] + v*dt*torch.sin(states[2])
     states_next[2] = states[2] + dt*ac
-
 
     # the data is (o_t, a_t), don't observe o_t+1 yet
     state_obs.append(states[2].numpy()) # get to observe theta
@@ -93,7 +106,7 @@ def gen_one_traj_img(config):
       dones.append(0)
         
     acs.append(ac)
-    img_array = get_frame(states, config)
+    img_array = get_frame(states, config, curr_traj_count=curr_traj_count)
     img_obs.append(img_array)
     states = states_next
     if dones[-1] == 1:
@@ -102,18 +115,23 @@ def gen_one_traj_img(config):
 
 def generate_trajs(config):
   demos = []
+  curr_traj_count = 0
   for i in range(config.num_trajs):
-    state_obs, acs, state_gt, img_obs, dones = gen_one_traj_img(config)
+    state_obs, acs, state_gt, img_obs, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
     demo = {}
     demo['obs'] = {'image': img_obs, 'state': state_obs, 'priv_state': state_gt}
     demo['actions'] = acs
     demo['dones'] = dones
     demos.append(demo)
     print('demo: ', i, "timesteps: ", len(state_obs))
+    curr_traj_count += 1
 
-  
-  with open('wm_demos'+str(config.size[0])+'.pkl', 'wb') as f:
-    pickle.dump(demos, f)
+  if config.multimodal:
+    with open('wm_demos' + str(config.size[0]) + '_multimodal.pkl', 'wb') as f:
+      pickle.dump(demos, f)
+  else:
+    with open('wm_demos' + str(config.size[0]) + '.pkl', 'wb') as f:
+      pickle.dump(demos, f)
 
 def recursive_update(base, update):
     for key, value in update.items():
