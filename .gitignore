@@ -19,4 +19,4 @@ experiment_script/final_runs/new_new_backup
 
 wandb/
 logs/
-wm_demos128.pkl
+wm_demos*.pkl
