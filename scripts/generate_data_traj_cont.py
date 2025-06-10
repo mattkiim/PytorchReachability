@@ -18,7 +18,7 @@ sys.path.append(dreamer_dir)
 import tools
 
 def get_heat_frame(config, buf):
-  img_heat = Image.open(buf).getchannel("R")
+  img_heat = Image.open(buf).getchannel("B")
   img_heat_array = np.array(img_heat).reshape(128, 128, 1)
   # img_heat_array /= img_heat_array
   return img_heat_array
