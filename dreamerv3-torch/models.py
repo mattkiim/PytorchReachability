@@ -35,7 +35,7 @@ class WorldModel(nn.Module):
         self._config = config
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
         print(f"[models/WorldModel]: {shapes}")
-        self.encoder = networks.MultiEncoder(shapes, **config.encoder)
+        self.encoder = networks.MultiEncoder(shapes, config.multimodal, **config.encoder) # TODO: **config.multimodal_encoder
         self.embed_size = self.encoder.outdim
         self.dynamics = networks.RSSM(
             config.dyn_stoch,
@@ -72,19 +72,6 @@ class WorldModel(nn.Module):
             device=config.device,
             name="Margin",
         )
-        '''self.heads["reward"] = networks.MLP(
-            feat_size,
-            (255,) if config.reward_head["dist"] == "symlog_disc" else (),
-            config.reward_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist=config.reward_head["dist"],
-            outscale=config.reward_head["outscale"],
-            device=config.device,
-            name="Reward",
-        )
-        '''
         self.heads["cont"] = networks.MLP(
             feat_size,
             (),
