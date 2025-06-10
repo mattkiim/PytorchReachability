@@ -671,7 +671,7 @@ if __name__ == "__main__":
     yaml = yaml.YAML(typ="safe", pure=True)
     configs = yaml.load(
         (pathlib.Path(sys.argv[0]).parent / f"../{args.config_path}").read_text()
-    ) # FIXME: revert
+    )
 
     def recursive_update(base, update):
         for key, value in update.items():
