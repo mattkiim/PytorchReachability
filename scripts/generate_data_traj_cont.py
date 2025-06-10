@@ -17,11 +17,14 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
-def get_heat_frame(config, buf):
-  img_heat = Image.open(buf).getchannel("B")
-  img_heat_array = np.array(img_heat).reshape(128, 128, 1)
-  # img_heat_array /= img_heat_array
-  return img_heat_array
+def show_heat_image(img_heat_array, save_path="test.png"):
+  img_heat_array = img_heat_array.squeeze(-1).astype(np.uint8)
+  Image.fromarray(img_heat_array).convert("L").save(save_path)
+
+def get_heat_frame(img_array):
+  heat_frame = img_array[..., 2:3]
+  # show_heat_image(heat_frame); quit()
+  return heat_frame
 
 def get_frame(states, config, curr_traj_count=0):
   dt = config.dt
@@ -49,7 +52,7 @@ def get_frame(states, config, curr_traj_count=0):
   
   # generate heat frame of image
   if config.multimodal:
-    img_heat_array = get_heat_frame(config, buf)
+    img_heat_array = get_heat_frame(img_array)
     if curr_traj_count < config.multimodal_traj_prop * config.num_trajs:
       img_heat_array *= 0
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
