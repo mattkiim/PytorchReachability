@@ -1,13 +1,15 @@
 import argparse
 import os
 import sys
-import pprint
+
+import warnings
+warnings.simplefilter("ignore", category=FutureWarning)
 
 import gymnasium #as gym
-import gym
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
+
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -116,8 +118,17 @@ config = args
 
 env = gymnasium.make(args.task, params=[config])
 config.num_actions = env.action_space.n if hasattr(env.action_space, "n") else env.action_space.shape[0]
+
+if config.multimodal:
+    env.observation_space_full['image'] = gymnasium.spaces.Box(
+        low=0,
+        high=255,
+        shape=(128, 128, 4), # TODO: softcode input
+        dtype=np.uint8
+    )
+    
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
-print(env.observation_space_full['image']); quit()
+# print(env.observation_space_full['image']); quit()
 
 ckpt_path = config.rssm_ckpt_path
 checkpoint = torch.load(ckpt_path, weights_only=True)
