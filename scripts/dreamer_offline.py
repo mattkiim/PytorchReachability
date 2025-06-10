@@ -402,7 +402,7 @@ class Dreamer(nn.Module):
         g_x = []
         g_xlist, _, _ = self.get_latent(self.theta_lin, self.imgs)
         g_x = g_x + g_xlist.tolist()
-
+        
         g_x = np.array(g_x)
         v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
 
@@ -513,7 +513,7 @@ def main(config):
     if config.multimodal:
         image_observation_space = gym.spaces.Box(
             low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
-        )
+        ) # TODO: softcode 4 (e.g. make it a function of config params)
     else:
         image_observation_space = gym.spaces.Box(
             low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
@@ -527,19 +527,17 @@ def main(config):
             'image': image_observation_space
     })
     
-    # print(observation_space['image'])
-    # print("Action Space", action_space); quit()
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
     # expert episode buffer
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
-    tools.fill_expert_dataset_dubins(config, expert_eps)
+    tools.fill_expert_dataset_dubins(config, expert_eps) # FIXME: undo
     expert_dataset = make_dataset(expert_eps, config)
     
     # validation replay buffer
     expert_val_eps = collections.OrderedDict()
-    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
+    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True) # FIXME: undo
     eval_dataset = make_dataset(expert_eps, config)
 
     print("Length of training data:", len(expert_eps))
@@ -602,12 +600,23 @@ def main(config):
 
         # For Logging (1 episode)
         if config.video_pred_log:
-            video_pred = agent._wm.video_pred(next(eval_dataset))
-            logger.video("eval_recon/openl_agent", to_np(video_pred))
+            if config.multimodal:
+                video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
+                logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
+                logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
 
-            if other_dataset:
-                video_pred = agent._wm.video_pred(next(other_dataset))
-                logger.video("train_recon/openl_agent", to_np(video_pred))
+                if other_dataset:
+                    video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(other_dataset))
+                    logger.video("train_recon/openl_agent", to_np(video_pred_rgb))
+                    logger.video("train_recon_heat/openl_agent", to_np(video_pred_heat))
+                    
+            else:
+                video_pred = agent._wm.video_pred(next(eval_dataset))
+                logger.video("eval_recon/openl_agent", to_np(video_pred))
+
+                if other_dataset:
+                    video_pred = agent._wm.video_pred(next(other_dataset))
+                    logger.video("train_recon/openl_agent", to_np(video_pred))
 
         
         logger.write(step=logger.step)
@@ -615,6 +624,7 @@ def main(config):
 
         agent.train()
         return recon_eval, recon_eval
+    
     # ==================== Pretrain ====================
     total_train_steps = config.rssm_train_steps 
     print(total_train_steps)
@@ -651,18 +661,17 @@ def main(config):
     
             exp_data = next(expert_dataset)
             agent.pretrain_model_only(exp_data, step)
-    
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", default="configs.yaml", type=str)
     parser.add_argument("--configs", nargs="+")
     args, remaining = parser.parse_known_args()
 
     yaml = yaml.YAML(typ="safe", pure=True)
     configs = yaml.load(
-        (pathlib.Path(sys.argv[0]).parent / "../configs.yaml").read_text()
-    )
+        (pathlib.Path(sys.argv[0]).parent / f"../{args.config_path}").read_text()
+    ) # FIXME: revert
 
     def recursive_update(base, update):
         for key, value in update.items():
