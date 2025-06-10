@@ -273,8 +273,17 @@ class WorldModel(nn.Module):
         truth = data["image"][:6]
         model = model
         error = (model - truth + 1.0) / 2.0
-
+        # print(f"[models/WorldModel/video_pred] recon shape: {recon.shape}, {model.shape}")
         return torch.cat([truth, model, error], 2)
+    
+    def video_pred_multimodal(self, data):
+        video = self.video_pred(data)
+        
+        video_rgb = video[..., :3] # TODO: soft code
+        video_heat = video[..., 3:] # TODO: soft code
+        video_heat_3 = torch.concatenate([video_heat, video_heat, video_heat], dim=-1)
+        # print(video_rgb.shape, video_heat.shape, video.shape); quit()
+        return video_rgb, video_heat_3
 
 
 class ImagBehavior(nn.Module):
