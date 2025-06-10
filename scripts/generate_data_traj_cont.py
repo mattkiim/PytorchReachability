@@ -21,10 +21,21 @@ def show_heat_image(img_heat_array, save_path="test.png"):
   img_heat_array = img_heat_array.squeeze(-1).astype(np.uint8)
   Image.fromarray(img_heat_array).convert("L").save(save_path)
 
-def get_heat_frame(img_array):
-  heat_frame = img_array[..., 2:3]
-  # show_heat_image(heat_frame); quit()
-  return heat_frame
+def get_heat_frame(img_array, config):
+    heat_frame = img_array[..., 2:3]
+    
+    H, W, _ = img_array.shape
+    Y, X = np.ogrid[:H, :W]
+    
+    cx = int((config.obs_x - config.x_min) / (config.x_max - config.x_min) * W)
+    cy = int((config.y_max - config.obs_y) / (config.y_max - config.y_min) * H)
+    radius = int(config.obs_r / (config.x_max - config.x_min) * W)
+
+    mask = (X - cx)**2 + (Y - cy)**2 <= radius**2
+    heat_frame[mask] = 0
+    # show_heat_image(heat_frame); quit()
+
+    return heat_frame
 
 def get_frame(states, config, curr_traj_count=0):
   dt = config.dt
@@ -52,7 +63,7 @@ def get_frame(states, config, curr_traj_count=0):
   
   # generate heat frame of image
   if config.multimodal:
-    img_heat_array = get_heat_frame(img_array)
+    img_heat_array = get_heat_frame(img_array, config)
     if curr_traj_count < config.multimodal_traj_prop * config.num_trajs:
       img_heat_array *= 0
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
