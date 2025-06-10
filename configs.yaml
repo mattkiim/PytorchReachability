@@ -14,14 +14,14 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 2000 ## 2000 in paper
-  num_train_trajs: 1800 ## 1900 in paper
+  num_trajs: 2000 ## 4000 in paper
+  num_train_trajs: 1900 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'wm_demos128_multimodal.pkl' # '128' should be the same as the size above
+  dataset_path: 'wm_demos128_multimodal_filled.pkl' # '128' should be the same as the size above
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/dreamer_dubins_multimodal' 
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal/rssm_ckpt.pt # change this to whatever the path to your rssm checkpoint is
+  logdir: 'logs/dreamer_dubins_multimodal_filled' 
+  rssm_ckpt_path: logs/dreamer_dubins_multimodal_filled/rssm_ckpt.pt # change this to whatever the path to your rssm checkpoint is
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -164,3 +164,4 @@ defaults:
 
   multimodal: True
   multimodal_traj_prop: 0.5
+  use_wandb: False
