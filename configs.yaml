@@ -34,7 +34,7 @@ defaults:
   eval_episode_num: 10
   log_every: 5e2
   reset_every: 0
-  device: 'cuda:0'
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
@@ -163,5 +163,6 @@ defaults:
   ny: 41
 
   multimodal: True
-  multimodal_traj_prop: 0.5
+  aug_rssm: False
+  heat_prop: 0.5
   use_wandb: False
