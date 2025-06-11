@@ -511,22 +511,36 @@ def main(config):
     image_size = config.size[0] # 128
     
     if config.multimodal:
-        image_observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
-        ) # TODO: softcode 4 (e.g. make it a function of config params)
-    else:
-        image_observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
-        )
+        if config.aug_rssm: 
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+            )
+        else:
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
+            ) # TODO: softcode 4 (e.g. make it a function of config params)
+
     obs_observation_space = gym.spaces.Box(
         low=-1, high=1, shape=(2,), dtype=np.float32
     )
-    observation_space = gym.spaces.Dict({
+    
+    if config.aug_rssm:
+        heat_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
+        )
+        observation_space = gym.spaces.Dict({
             'state': gt_observation_space,
             'obs_state': obs_observation_space,
-            'image': image_observation_space
-    })
-    
+            'image': image_observation_space,
+            'heat': heat_observation_space,
+        })
+    else:
+        observation_space = gym.spaces.Dict({
+            'state': gt_observation_space,
+            'obs_state': obs_observation_space,
+            'image': image_observation_space,
+        })
+        
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
     # expert episode buffer
