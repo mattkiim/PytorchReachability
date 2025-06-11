@@ -10,6 +10,7 @@ import pathlib
 import ruamel.yaml as yaml
 import os
 import sys
+import copy
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -63,13 +64,17 @@ def get_frame(states, config, curr_traj_count=0):
   
   # generate heat frame of image
   if config.multimodal:
-    img_heat_array = get_heat_frame(img_array, config)
-    if curr_traj_count < config.multimodal_traj_prop * config.num_trajs:
+    img_heat_array = get_heat_frame(copy.deepcopy(img_array), config)
+    if curr_traj_count < config.heat_prop * config.num_trajs:
       img_heat_array[:] = 255
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
   else:
     img_array_combined = img_array
-    
+  
+  # img = img_array_combined[..., :3].astype(np.uint8)
+  # img_pil = Image.fromarray(img)
+  # img_pil.save("test2.png"); quit()
+  
   plt.close(fig)
   return img_array_combined
    
