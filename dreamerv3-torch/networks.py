@@ -299,6 +299,7 @@ class MultiEncoder(nn.Module):
         aug_rssm,
         mlp_keys,
         cnn_keys,
+        heat_keys,
         act,
         norm,
         cnn_depth,
@@ -325,18 +326,19 @@ class MultiEncoder(nn.Module):
         }
         if multimodal and aug_rssm:
             self.heat_cnn_shapes = {
-                k: v for k, v in shapes.items() if len(v) == 3 and re.match(cnn_keys, k)
-            } # TODO: update
+                k: v for k, v in shapes.items() if len(v) == 3 and re.match(heat_keys, k)
+            }
         else: 
             self.heat_cnn_shapes = None
         
         # print("Encoder CNN shapes:", self.cnn_shapes)
         # print("Encoder MLP shapes:", self.mlp_shapes)
+        # print("Heat CNN shapes:", self.heat_cnn_shapes); quit()
 
         self.outdim = 0
         if self.cnn_shapes:
             input_ch = sum([v[-1] for v in self.cnn_shapes.values()])
-            print(f"[networks/MultiEncoder] CNN input channels: {input_ch}")
+            # print(f"[networks/MultiEncoder/init] CNN input channels: {input_ch}")
             input_shape = tuple(self.cnn_shapes.values())[0][:2] + (input_ch,)
             self._cnn = ConvEncoder(
                 input_shape, cnn_depth, act, norm, kernel_size, minres
@@ -356,26 +358,38 @@ class MultiEncoder(nn.Module):
                 name="Encoder",
             )
             self.outdim += mlp_units
-            
+        
         if self.heat_cnn_shapes:
             heat_input_ch = sum([v[-1] for v in self.heat_cnn_shapes.values()])
-            print(f"[networks/MultiEncoder] MM-CNN input channels: {heat_input_ch}")
+            # print(f"[networks/MultiEncoder/init] MM-CNN input channels: {heat_input_ch}") # should be 1
             heat_input_shape = tuple(self.heat_cnn_shapes.values())[0][:2] + (heat_input_ch,)
             self._heat_cnn = ConvEncoder(
-                heat_input_shape, cnn_depth, act, norm, kernel_size, minres
+                heat_input_shape, 
+                cnn_depth,
+                act, 
+                norm, 
+                kernel_size, 
+                minres
             )
             self.outdim += self._heat_cnn.outdim
 
     def forward(self, obs):
         outputs = []
         if self.cnn_shapes:
+            # print()
+            # print(f"[networks/MultiEncoder/forward] cnn_shapes: {self.cnn_shapes}")
             inputs = torch.cat([obs[k] for k in self.cnn_shapes], -1)
+            # print(f"[networks/MultiEncoder/forward] inputs shape: {inputs.shape}")
+            # print(inputs.mean())
             outputs.append(self._cnn(inputs))
         if self.mlp_shapes:
             inputs = torch.cat([obs[k] for k in self.mlp_shapes], -1)
             outputs.append(self._mlp(inputs))
         if self.heat_cnn_shapes:
+            # print(f"[networks/MultiEncoder/forward] heat cnn shape: {self.heat_cnn_shapes}")
             inputs = torch.cat([obs[k] for k in self.heat_cnn_shapes], -1)
+            # print(f"[networks/MultiEncoder/forward]: input shape {inputs.shape}")
+            # print(inputs.mean()); quit()
             outputs.append(self._heat_cnn(inputs))
         outputs = torch.cat(outputs, -1)
         return outputs
@@ -390,6 +404,7 @@ class MultiDecoder(nn.Module):
         aug_rssm,
         mlp_keys,
         cnn_keys,
+        heat_keys,
         act,
         norm,
         cnn_depth,
@@ -415,8 +430,8 @@ class MultiDecoder(nn.Module):
         }
         if multimodal and aug_rssm:
             self.heat_cnn_shapes = {
-                k: v for k, v in shapes.items() if len(v) == 3 and re.match(cnn_keys, k)
-            } # TODO: change
+                k: v for k, v in shapes.items() if len(v) == 3 and re.match(heat_keys, k)
+            }
         else:
             self.heat_cnn_shapes = None
             
@@ -486,13 +501,14 @@ class MultiDecoder(nn.Module):
         
         if self.heat_cnn_shapes:
             feat = features
-            outputs = self._heat_cnn(feat)
+            outputs_heat = self._heat_cnn(feat)
+            # print(f"[networks/MultiDecoder/forward] outputs_heat shape: {outputs_heat.shape}")
             split_sizes = [v[-1] for v in self.heat_cnn_shapes.values()]
-            outputs = torch.split(outputs, split_sizes, -1)
+            outputs_heat = torch.split(outputs_heat, split_sizes, -1)
             dists.update(
                 {
-                    key: self._make_image_dist(output)
-                    for key, output in zip(self.heat_cnn_shapes.keys(), outputs)
+                    key: self._make_image_dist(output_heat)
+                    for key, output_heat in zip(self.heat_cnn_shapes.keys(), outputs_heat)
                 }
             )
         return dists

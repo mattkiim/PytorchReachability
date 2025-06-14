@@ -34,7 +34,7 @@ from io import BytesIO
 from PIL import Image
 
 to_np = lambda x: x.detach().cpu().numpy()
-from generate_data_traj_cont import get_frame
+from generate_data_traj_cont import get_frame_eval
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
@@ -68,7 +68,8 @@ class Dreamer(nn.Module):
         )[config.expl_behavior]().to(self._config.device)
 
         self._make_pretrain_opt()
-        self.fill_cache()
+        if self._config.fill_cache:
+            self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
@@ -238,8 +239,6 @@ class Dreamer(nn.Module):
                 losses = {}
                 feat = wm.dynamics.get_feat(post)
 
-                
-
                 if (step <= self._config.rssm_train_steps):
                     preds = {}
                     for name, head in wm.heads.items():
@@ -252,20 +251,30 @@ class Dreamer(nn.Module):
                                 preds.update(pred)
                             else:
                                 preds[name] = pred
-                    # preds is dictionary of all all MLP+CNN keys
+                    # preds is dictionary of all MLP+CNN keys
                     for name, pred in preds.items():
                         if name == "cont":
                             cont_loss = -pred.log_prob(data[name])
                         elif name != "margin":
+                            # print(name, data[name].shape); quit()
                             loss = -pred.log_prob(data[name])
                             assert loss.shape == embed.shape[:2], (name, loss.shape)
                             losses[name] = loss
                         
                     recon_loss = sum(losses.values())
                     # failure margin
-                    failure_data = data["failure"]
-                    safe_data = torch.where(failure_data == 0.)
-                    unsafe_data = torch.where(failure_data == 1.)
+                    # vis_failure_data = data["vis_failure"]
+                    failure_data = data["failure"] # 1 for unsafe, 0 for safe
+                    
+                    
+                    # print(vis_failure_data.shape, heat_failure_data.shape); quit()
+                    safe_mask = failure_data == 0
+                    unsafe_mask = ~safe_mask
+
+                    safe_data = torch.where(safe_mask)
+                    unsafe_data = torch.where(unsafe_mask)
+                    # print(unsafe_data); quit()
+                    
                     safe_dataset = feat[safe_data]
                     unsafe_dataset = feat[unsafe_data]
                     pos = wm.heads["margin"](safe_dataset)
@@ -344,6 +353,7 @@ class Dreamer(nn.Module):
         it = np.nditer(v, flags=['multi_index'])
         idxs = []  
         imgs = []
+        heat = []
         labels = []
         it = np.nditer(v, flags=["multi_index"])
         while not it.finished:
@@ -358,20 +368,27 @@ class Dreamer(nn.Module):
             x = x - np.cos(theta)*1*0.05
             y = y - np.sin(theta)*1*0.05
             #imgs.append(self.capture_image(np.array([x, y, theta])))
-            imgs.append(get_frame(torch.tensor([x, y, theta]), self._config))
-            idxs.append(idx)        
+            img = get_frame_eval(torch.tensor([x, y, theta]), self._config, heat=True) # TODO: generate iff files dont exist
+            imgs.append(img[..., :-1])
+            heat.append(img[..., -1:])
+            idxs.append(idx)
             it.iternext()
         idxs = np.array(idxs)
-        self.idxs=idxs
+        self.idxs = idxs
         self.safe_idxs = np.where(np.array(labels) == 0)
         self.unsafe_idxs = np.where(np.array(labels) == 1)
         self.theta_lin = thetas[idxs[:,2]]
         self.imgs = imgs
+        self.heat = heat
         print('done!')
         
-    def get_latent(self, thetas, imgs):
+    def get_latent(self, thetas, imgs, heat, heat_bool=False):
         states = np.expand_dims(np.expand_dims(thetas,1),1)
         imgs = np.expand_dims(imgs, 1)
+        heat = np.expand_dims(heat, 1)
+        heat[:] = 255 if not heat_bool else heat
+        # print(f"[dreamer_offline/Dreamer/get_latent] heat: {heat.mean()}")
+        # print(imgs.shape); quit()
         dummy_acs = np.zeros((np.shape(thetas)[0], 1))
         dummy_acs[np.arange(np.shape(thetas)[0]), :] = 0.
         firsts = np.ones((np.shape(thetas)[0], 1))
@@ -380,7 +397,7 @@ class Dreamer(nn.Module):
         cos = np.cos(states)
         sin = np.sin(states)
         states = np.concatenate([cos, sin], axis=-1)
-        data = {'obs_state': states, 'image': imgs, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
+        data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
 
         data = self._wm.preprocess(data)
         embed = self._wm.encoder(data)
@@ -394,78 +411,101 @@ class Dreamer(nn.Module):
         feat = self._wm.dynamics.get_feat(post).detach().cpu().numpy().squeeze()
 
         return g_x, feat, post
-    
-    
+
     def get_eval_plot(self):
         self.eval()
-        v = self.v
-        g_x = []
-        g_xlist, _, _ = self.get_latent(self.theta_lin, self.imgs)
-        g_x = g_x + g_xlist.tolist()
         
-        g_x = np.array(g_x)
-        v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
-
-        tp  = np.where(g_x[self.safe_idxs] > 0)
-        fn  = np.where(g_x[self.safe_idxs] <= 0)
-        fp  = np.where(g_x[self.unsafe_idxs] > 0)
-        tn  = np.where(g_x[self.unsafe_idxs] <= 0)
+        # Get latent predictions for both heat_bool False and True
+        g_x_cold, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat, heat_bool=False)
+        g_x_hot, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat, heat_bool=True)
         
-        vmax = round(max(np.max(v), 0),1)
-        vmin = round(min(np.min(v), -vmax),1)
-        
-        fig, axes = plt.subplots(self.nz, 2, figsize=(12, self.nz*6))
-        
-        for i in range(self.nz):
-            ax = axes[i, 0]
-            im = ax.imshow(
-                v[:, :, i].T, interpolation='none', extent=np.array([
-                self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max, ]), origin="lower",
-                cmap="seismic", vmin=vmin, vmax=vmax, zorder=-1
-            )
-            cbar = fig.colorbar(
-                im, ax=ax, pad=0.01, fraction=0.05, shrink=.95, ticks=[vmin, 0, vmax]
-            )
-            cbar.ax.set_yticklabels(labels=[vmin, 0, vmax], fontsize=24)
-            ax.set_title(r'$g(x)$', fontsize=18)
+        g_x_list = [np.array(g_x_cold), np.array(g_x_hot)]
+        # print(g_x_list[0].mean(), g_x_list[1].mean()); quit()
+        titles = ['w/o Heat', 'w/ Heat']
+        num_modes = len(g_x_list)
 
-            ax = axes[i, 1]
-            im = ax.imshow(
-                v[:, :, i].T > 0, interpolation='none', extent=np.array([
-                self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max, ]), origin="lower",
-                cmap="seismic", vmin=-1, vmax=1, zorder=-1
-            )
-            cbar = fig.colorbar(
-                im, ax=ax, pad=0.01, fraction=0.05, shrink=.95, ticks=[vmin, 0, vmax]
-            )
-            cbar.ax.set_yticklabels(labels=[vmin, 0, vmax], fontsize=24)
-            ax.set_title(r'$v(x)$', fontsize=18)
-            fig.tight_layout()
-            circle = plt.Circle((0, 0), self._config.obs_r, fill=False, color='blue', label = 'GT boundary')
+        # Create plot: each row is a slice, columns alternate g/v for each mode
+        fig, axes = plt.subplots(self.nz, num_modes * 2, figsize=(6 * num_modes * 2, self.nz * 6))
 
-            # Add the circle to the plot
-            axes[i,0].add_patch(circle)
-            axes[i,0].set_aspect('equal')
-            circle2 = plt.Circle((0, 0), self._config.obs_r, fill=False, color='blue', label = 'GT boundary')
+        if self.nz == 1:
+            axes = np.expand_dims(axes, axis=0)  # handle single-row case
 
-            axes[i,1].add_patch(circle2)
-            axes[i,1].set_aspect('equal')
+        vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]
+        vmin_all = [round(min(np.min(gx), -v), 1) for gx, v in zip(g_x_list, vmax_all)]
 
-        fp_g = np.shape(fp)[1]
-        fn_g = np.shape(fn)[1]
-        tp_g = np.shape(tp)[1]
-        tn_g = np.shape(tn)[1]
-        tot = fp_g + fn_g + tp_g + tn_g
-        fig.suptitle(r"$TP={:.0f}\%$ ".format(tp_g/tot * 100) + r"$TN={:.0f}\%$ ".format(tn_g/tot * 100) + r"$FP={:.0f}\%$ ".format(fp_g/tot * 100) +r"$FN={:.0f}\%$".format(fn_g/tot * 100),
-            fontsize=10,)
-        buf = BytesIO()
+        metrics_summary = []
 
-        plt.savefig(buf, format="png")
-        plt.close()
-        buf.seek(0)
-        plot = Image.open(buf).convert("RGB")
+        def draw_circle(ax):
+            circle = plt.Circle((0, 0), self._config.obs_r, fill=False, color='blue', label='GT boundary')
+            ax.add_patch(circle)
+            ax.set_aspect('equal')
+
+        def draw_colorbar(image, ax, vmin, vmax):
+            cbar = fig.colorbar(image, ax=ax, pad=0.01, fraction=0.05, shrink=0.95, ticks=[vmin, 0, vmax])
+            cbar.ax.set_yticklabels([vmin, 0, vmax], fontsize=12)
+
+        for mode_idx, g_x in enumerate(g_x_list):
+            self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
+            v = self.v
+
+            # Classification metrics
+            tp = np.where(g_x[self.safe_idxs] > 0)
+            fn = np.where(g_x[self.safe_idxs] <= 0)
+            fp = np.where(g_x[self.unsafe_idxs] > 0)
+            tn = np.where(g_x[self.unsafe_idxs] <= 0)
+
+            tp_g, fn_g = map(lambda x: x[0].shape[0], (tp, fn))
+            fp_g, tn_g = map(lambda x: x[0].shape[0], (fp, tn))
+            total = tp_g + fn_g + fp_g + tn_g
+            metrics_summary.append((tp_g, tn_g, fp_g, fn_g, total))
+
+            vmin = vmin_all[mode_idx]
+            vmax = vmax_all[mode_idx]
+
+            for i in range(self.nz):
+                ax1 = axes[i, mode_idx * 2]
+                ax2 = axes[i, mode_idx * 2 + 1]
+
+                # g(x)
+                im1 = ax1.imshow(
+                    v[:, :, i].T, interpolation='none',
+                    extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
+                    origin="lower", cmap="seismic", vmin=vmin, vmax=vmax, zorder=-1
+                )
+                draw_colorbar(im1, ax1, vmin, vmax)
+                ax1.set_title(f"$g(x)$ {titles[mode_idx]}", fontsize=16)
+                draw_circle(ax1)
+
+                # v(x)
+                im2 = ax2.imshow(
+                    v[:, :, i].T > 0, interpolation='none',
+                    extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
+                    origin="lower", cmap="seismic", vmin=-1, vmax=1, zorder=-1
+                )
+                draw_colorbar(im2, ax2, -1, 1)
+                ax2.set_title(f"$v(x)$ {titles[mode_idx]}", fontsize=16)
+                draw_circle(ax2)
+
+        fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+        # Summary title
+        summary_lines = [
+            rf"$\text{{[{titles[idx]}]  TP={tp_g/total:.0%}  TN={tn_g/total:.0%}  FP={fp_g/total:.0%}  FN={fn_g/total:.0%}}}$"
+            for idx, (tp_g, tn_g, fp_g, fn_g, total) in enumerate(metrics_summary)
+        ]
+
+        fig.suptitle("\n".join(summary_lines), fontsize=14)
+
+        with BytesIO() as buf:
+            plt.savefig(buf, format="png")
+            plt.close(fig)
+            buf.seek(0)
+            image = Image.open(buf).convert("RGB")
+
         self.train()
-        return np.array(plot), tp, fn, fp, tn
+        return np.array(image), tp, fn, fp, tn
+
+
     
 def count_steps(folder):
     return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
@@ -519,6 +559,10 @@ def main(config):
             image_observation_space = gym.spaces.Box(
                 low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
             ) # TODO: softcode 4 (e.g. make it a function of config params)
+    else:
+        image_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+        )
 
     obs_observation_space = gym.spaces.Box(
         low=-1, high=1, shape=(2,), dtype=np.float32
@@ -540,18 +584,20 @@ def main(config):
             'obs_state': obs_observation_space,
             'image': image_observation_space,
         })
+
+    # print(observation_space); quit()
         
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
     # expert episode buffer
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
-    tools.fill_expert_dataset_dubins(config, expert_eps) # FIXME: undo
+    tools.fill_expert_dataset_dubins(config, expert_eps)
     expert_dataset = make_dataset(expert_eps, config)
     
     # validation replay buffer
     expert_val_eps = collections.OrderedDict()
-    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True) # FIXME: undo
+    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_eps, config)
 
     print("Length of training data:", len(expert_eps))
@@ -583,6 +629,7 @@ def main(config):
         plot = Image.open(buf).convert("RGB")
         plot_arr = np.array(plot)
         logger.image("pretrain/" + title, np.transpose(plot_arr, (2, 0, 1)))
+        
     def eval_obs_recon():
         recon_steps = 101
         obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 3)
@@ -671,8 +718,7 @@ def main(config):
                 best_pretrain_success = tools.save_checkpoint(
                     ckpt_name, step, success, best_pretrain_success, agent, logdir
                 )
-
-    
+                
             exp_data = next(expert_dataset)
             agent.pretrain_model_only(exp_data, step)
 

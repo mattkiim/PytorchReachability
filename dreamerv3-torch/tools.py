@@ -147,8 +147,6 @@ class Logger:
         wandb.log({name: wandb.Video(value, fps=16, format="mp4")}, step=step)
 
 
-
-
 def save_checkpoint(
     ckpt_name: Union[str, Callable[[int], str]],
     step: int,
@@ -205,7 +203,8 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     num_train = config.num_train_trajs
     
     
-    pixel_keys = sorted(['image'])
+    pixel_keys = sorted(['image', 'heat'])
+    # pixel_keys = sorted(['image'])
     state_keys = sorted(['state'])
 
     for i, demo in tqdm(
@@ -224,7 +223,12 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
         for t in range(len(traj["obs"][pixel_keys[0]])):
             transition = defaultdict(np.array)
             for obs_key in pixel_keys:
+                # print(obs_key, traj["obs"][obs_key][t])
                 transition[obs_key] = traj["obs"][obs_key][t]
+                
+                # FIXME: temp below
+                # transition[obs_key] = traj["obs"][obs_key][t][..., :3]
+                # transition['heat'] = traj["obs"][obs_key][t][..., -1:]
 
             if len(state_keys) != 0:
                 curr_obs_state_vec = [
@@ -237,16 +241,52 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             transition["reward"] = np.array(
                 0, dtype=np.float32
             )
+            
+            # position and geometry-based check
+            position = traj['obs']['priv_state'][t][:2]
+            obstacle_center = np.array([config.obs_x, config.obs_y])
+            distance = np.linalg.norm(position - obstacle_center)
+            vis_failure = distance < config.obs_r
+
+            # heat-based check
+            if "heat" in traj['obs']:
+                heat_map = traj['obs']['heat'][t]
+
+                # convert agent (x, y) → heat-map indices
+                x, y = position
+                x_idx = int((x - config.x_min) / (config.x_max - config.x_min) * (heat_map.shape[0] - 1))
+                y_idx = int((y - config.y_min) / (config.y_max - config.y_min) * (heat_map.shape[1] - 1))
+                x_idx = np.clip(x_idx, 0, heat_map.shape[0]-1)
+                y_idx = np.clip(y_idx, 0, heat_map.shape[1]-1)
+
+                heat_value = heat_map[x_idx, y_idx]
+                heat_value = heat_value.item()
+                epsilon = 1e-4
+                heat_failure = (heat_value <= epsilon)
+                
+                # print(f"\n[tools/fill_expert_dataset] heat stuff: {x}, {y}, {x_idx}, {y_idx}, {heat_value}, {heat_failure}, {heat_map.shape}")
+            else:
+                heat_failure = vis_failure
+                
+            # print(f"\n[tools/fill_expert_dataset] vis stuff: {x}, {y}, {distance}, {vis_failure}")
+            
+            # print(heat_failure.shape, vis_failure.shape)
+
+            transition["failure"] = vis_failure
+            if "heat" in traj['obs']:
+                transition["failure"] = heat_failure
+                
+            # print(transition["failure"])
 
             # check if state is in obstacle
-            transition["failure"] = np.array(np.linalg.norm(traj['obs']['priv_state'][t][:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r, dtype=np.float32)
+            # transition["failure"] = np.array(np.linalg.norm(traj['obs']['priv_state'][t][:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r, dtype=np.float32) # TODO: make sure it's in obstacle for heat as well
             transition["is_first"] = np.array(t == 0, dtype=np.bool_)
             transition["is_last"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["is_terminal"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["discount"] = np.array(1, dtype=np.float32)
             transition["action"] = np.array(traj["actions"][t], dtype=np.float32)
-            
             add_to_cache(cache, f"exp_traj_{i}", transition)
+            
     if not is_val_set:
         cprint(
             f"Loading expert buffer with {config.num_train_trajs} trajectories from {dataset_path}",

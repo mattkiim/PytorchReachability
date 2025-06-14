@@ -17,11 +17,11 @@ defaults:
   num_trajs: 2000 ## 4000 in paper
   num_train_trajs: 1900 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'wm_demos128_multimodal_filled.pkl' # '128' should be the same as the size above
+  dataset_path: 'train_data/wm_demos128_multimodal_filled_v2.pkl' # '128' should be the same as the size above
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/dreamer_dubins_multimodal_filled' 
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_filled/rssm_ckpt.pt # change this to whatever the path to your rssm checkpoint is
+  logdir: 'logs/dreamer_dubins_multimodal_filled_v2'
+  rssm_ckpt_path: logs/dreamer_dubins_multimodal_filled_v2/rssm_ckpt.pt 
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -30,11 +30,11 @@ defaults:
   deterministic_run: False
   steps: 1e6
   parallel: False
-  eval_every: 5e2
+  eval_every: 1e2
   eval_episode_num: 10
-  log_every: 5e2
+  log_every: 1e2
   reset_every: 0
-  device: 'cuda:0' # TODO: softcode value
+  device: 'cuda:1' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
@@ -65,9 +65,9 @@ defaults:
   act: 'SiLU'
   norm: True
   encoder:
-    {mlp_keys: 'obs_state', cnn_keys: 'image', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, symlog_inputs: True} # TODO: add separate heat params
+    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, symlog_inputs: True} # TODO: change heat_key name eventually. need to dig into expert_dataset generation in tools 
   decoder:
-    {mlp_keys: 'obs_state', cnn_keys: 'image', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, cnn_sigmoid: False, image_dist: mse, vector_dist: symlog_mse, outscale: 1.0} # TODO: add separate heat params
+    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, cnn_sigmoid: False, image_dist: mse, vector_dist: symlog_mse, outscale: 1.0}
   actor:
     {layers: 2, dist: 'normal', entropy: 3e-4, unimix_ratio: 0.01, std: 'learned', min_std: 0.1, max_std: 1.0, temp: 0.1, lr: 3e-5, eps: 1e-5, grad_clip: 100.0, outscale: 1.0}
   critic:
@@ -163,6 +163,7 @@ defaults:
   ny: 41
 
   multimodal: True
-  aug_rssm: False
-  heat_prop: 0.5
+  aug_rssm: True
+  heat_prop: 0.0
+  fill_cache: True
   use_wandb: False

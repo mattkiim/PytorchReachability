@@ -65,7 +65,7 @@ def get_frame(states, config, curr_traj_count=0):
   # generate heat frame of image
   if config.multimodal:
     img_heat_array = get_heat_frame(copy.deepcopy(img_array), config)
-    if curr_traj_count < config.heat_prop * config.num_trajs:
+    if curr_traj_count >= config.heat_prop * config.num_trajs:
       img_heat_array[:] = 255
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
   else:
@@ -78,6 +78,47 @@ def get_frame(states, config, curr_traj_count=0):
   plt.close(fig)
   return img_array_combined
    
+def get_frame_eval(states, config, heat=True):
+  dt = config.dt
+  v = config.speed
+  fig,ax = plt.subplots()
+  plt.xlim([config.x_min, config.x_max])
+  plt.ylim([config.y_min, config.y_max])
+  plt.axis('off')
+  fig.set_size_inches(1, 1)
+  # Create the circle patch
+  circle = patches.Circle([config.obs_x, config.obs_y], config.obs_r, edgecolor=(1,0,0), facecolor=(1,0,0))
+  # Add the circle patch to the axis
+  ax.add_patch(circle)
+  plt.quiver(states[0], states[1], dt*v*torch.cos(states[2]), dt*v*torch.sin(states[2]), angles='xy', scale_units='xy', minlength=0,width=0.1, scale=0.18,color=(0,0,1), zorder=3)
+  plt.scatter(states[0], states[1],s=20, color=(0,0,1), zorder=3)
+  plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+  buf = io.BytesIO()
+  plt.savefig(buf, format='png', dpi=config.size[0])
+  buf.seek(0)
+
+  # load the buffer content as an RGB image
+  img = Image.open(buf).convert('RGB')
+  img_array = np.array(img)
+  
+  # generate heat frame of image
+  if config.multimodal:
+    img_heat_array = get_heat_frame(copy.deepcopy(img_array), config)
+    if not heat:
+      img_heat_array[:] = 255
+    img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
+  else:
+    img_array_combined = img_array
+  
+  # img = img_array_combined[..., :3].astype(np.uint8)
+  # img_pil = Image.fromarray(img)
+  # img_pil.save("test2.png"); quit()
+  
+  plt.close(fig)
+  return img_array_combined
+   
+
 def get_init_state(config):
   # don't sample inside the failure set
   states = torch.zeros(3)
@@ -98,6 +139,7 @@ def gen_one_traj_img(config, curr_traj_count=0):
 
   state_obs = []
   img_obs = []
+  heat_obs = []
   state_gt = []
   dones = []
   acs = []
@@ -128,19 +170,26 @@ def gen_one_traj_img(config, curr_traj_count=0):
         
     acs.append(ac)
     img_array = get_frame(states, config, curr_traj_count=curr_traj_count)
-    img_obs.append(img_array)
+    if config.multimodal: 
+      img_obs.append(img_array[..., :3])
+      # print(img_array[..., -1:].mean()); quit()
+      heat_obs.append(img_array[..., -1:])
+    else: 
+      img_obs.append(img_array)
+      heat_obs.append(img_array[..., 0] * 0)
     states = states_next
     if dones[-1] == 1:
       break
-  return state_obs, acs, state_gt, img_obs, dones
+  return state_obs, acs, state_gt, img_obs, heat_obs, dones
 
 def generate_trajs(config):
   demos = []
   curr_traj_count = 0
   for i in range(config.num_trajs):
-    state_obs, acs, state_gt, img_obs, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
+    state_obs, acs, state_gt, img_obs, heat_obs, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
+    # print(np.mean(img_obs), np.mean(heat_obs)); quit()
     demo = {}
-    demo['obs'] = {'image': img_obs, 'state': state_obs, 'priv_state': state_gt}
+    demo['obs'] = {'image': img_obs, 'heat': heat_obs, 'state': state_obs, 'priv_state': state_gt}
     demo['actions'] = acs
     demo['dones'] = dones
     demos.append(demo)
@@ -148,7 +197,7 @@ def generate_trajs(config):
     curr_traj_count += 1
 
   if config.multimodal:
-    with open('wm_demos' + str(config.size[0]) + '_multimodal_filled.pkl', 'wb') as f:
+    with open('train_data/wm_demos' + str(config.size[0]) + '_multimodal_filled_v2_no_heat_test.pkl', 'wb') as f:
       pickle.dump(demos, f)
   else:
     with open('wm_demos' + str(config.size[0]) + '.pkl', 'wb') as f:
