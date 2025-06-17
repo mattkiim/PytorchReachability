@@ -172,6 +172,7 @@ def save_checkpoint(
     items_to_save = {
         "agent_state_dict": agent.state_dict(),
         "optims_state_dict": recursively_collect_optim_state_dict(agent),
+        'step': step,
     }
     if hasattr(agent, "ema"):
         items_to_save["ema"] = agent.ema.state_dict()
@@ -235,7 +236,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                     traj["obs"][obs_key][t] for obs_key in state_keys
                 ]
                 transition["state"] = curr_obs_state_vec
-                
+            
             transition["privileged_state"] = traj['obs']['priv_state'][t]
             transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t])]
             transition["reward"] = np.array(
@@ -249,35 +250,13 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             vis_failure = distance < config.obs_r
 
             # heat-based check
-            if "heat" in traj['obs']:
-                heat_map = traj['obs']['heat'][t]
-
-                # convert agent (x, y) → heat-map indices
-                x, y = position
-                x_idx = int((x - config.x_min) / (config.x_max - config.x_min) * (heat_map.shape[0] - 1))
-                y_idx = int((y - config.y_min) / (config.y_max - config.y_min) * (heat_map.shape[1] - 1))
-                x_idx = np.clip(x_idx, 0, heat_map.shape[0]-1)
-                y_idx = np.clip(y_idx, 0, heat_map.shape[1]-1)
-
-                heat_value = heat_map[x_idx, y_idx]
-                heat_value = heat_value.item()
-                epsilon = 1e-4
-                heat_failure = (heat_value <= epsilon)
-                
-                # print(f"\n[tools/fill_expert_dataset] heat stuff: {x}, {y}, {x_idx}, {y_idx}, {heat_value}, {heat_failure}, {heat_map.shape}")
-            else:
-                heat_failure = vis_failure
-                
-            # print(f"\n[tools/fill_expert_dataset] vis stuff: {x}, {y}, {distance}, {vis_failure}")
-            
-            # print(heat_failure.shape, vis_failure.shape)
+            heat = traj['obs']['priv_heat'][t]
+            # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
             if "heat" in traj['obs']:
-                transition["failure"] = heat_failure
+                transition["failure"] &= heat
                 
-            # print(transition["failure"])
-
             # check if state is in obstacle
             # transition["failure"] = np.array(np.linalg.norm(traj['obs']['priv_state'][t][:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r, dtype=np.float32) # TODO: make sure it's in obstacle for heat as well
             transition["is_first"] = np.array(t == 0, dtype=np.bool_)

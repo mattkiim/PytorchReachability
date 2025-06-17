@@ -21,3 +21,4 @@ wandb/
 logs/
 wm_demos*.pkl
 test*
+cache/

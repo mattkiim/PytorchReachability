@@ -3,6 +3,7 @@ import functools
 import os
 import pathlib
 import sys
+import pickle
 
 os.environ["MUJOCO_GL"] = "osmesa"
 
@@ -34,7 +35,7 @@ from io import BytesIO
 from PIL import Image
 
 to_np = lambda x: x.detach().cpu().numpy()
-from generate_data_traj_cont import get_frame_eval
+from generate_data_traj_cont import get_frame_eval, get_heat_frame, get_realistic_heat_frame
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
@@ -68,8 +69,10 @@ class Dreamer(nn.Module):
         )[config.expl_behavior]().to(self._config.device)
 
         self._make_pretrain_opt()
+        
         if self._config.fill_cache:
-            self.fill_cache()
+            cache_path = self._config.cache_path
+            self.load_cache() if os.path.exists(cache_path) else self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
@@ -206,6 +209,7 @@ class Dreamer(nn.Module):
                 logged = True
 
             if video_pred_log and self._should_log_video(self._step):
+                print(f"[Dreamer/_maybe_log_metrics]: step: {self._step}")
                 video_pred, video_pred2 = self._wm.video_pred(next(self._dataset))
                 self._logger.video("train_openl_agent", to_np(video_pred))
                 self._logger.video("train_openl_hand", to_np(video_pred2))
@@ -266,7 +270,6 @@ class Dreamer(nn.Module):
                     # vis_failure_data = data["vis_failure"]
                     failure_data = data["failure"] # 1 for unsafe, 0 for safe
                     
-                    
                     # print(vis_failure_data.shape, heat_failure_data.shape); quit()
                     safe_mask = failure_data == 0
                     unsafe_mask = ~safe_mask
@@ -285,7 +288,7 @@ class Dreamer(nn.Module):
                     if pos.numel() > 0:
                         lx_loss += torch.relu(gamma - pos).mean()
                     if neg.numel() > 0:
-                        lx_loss += torch.relu(gamma + neg).mean()
+                        lx_loss += torch.relu(gamma + neg).mean() # multiplying this didn't change anything
 
                     lx_loss *=  self._config.margin_head["loss_scale"]
                     if step < 3000:
@@ -318,6 +321,7 @@ class Dreamer(nn.Module):
         self._update_running_metrics(metrics)
         self._maybe_log_metrics()
         self._step += 1
+        print(f"[Dreamer/pretrain_model_only]: step: {self._step}")
         self._logger.step = self._step
         
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
@@ -341,8 +345,31 @@ class Dreamer(nn.Module):
                 obs_mlp.train()
         return obs_loss.item()
     
+    def load_cache(self):
+        cache_path = self._config.cache_path
+
+        if not os.path.exists(cache_path):
+            print(f"No cache file found at {cache_path}")
+            return False
+
+        with open(cache_path, "rb") as f:
+            data = pickle.load(f)
+
+        self.idxs = data["idxs"]
+        self.safe_idxs = data["safe_idxs"]
+        self.unsafe_idxs = data["unsafe_idxs"]
+        self.theta_lin = data["theta_lin"]
+        self.imgs = data["imgs"]
+        self.heat = data["heat"]
+        self.no_heat = data["no_heat"]
+        self.v = np.zeros((self._config.nx, self._config.ny, 3))
+        self.nz = 3  # assuming fixed
+
+        print(f"Cache loaded from {cache_path}")
+        
     def fill_cache(self):
         print('filling cache')
+        cache_path = self._config.cache_path
         nx, ny, nz = self._config.nx, self._config.ny, 3
         self.nz = nz
         self.v = np.zeros((nx, ny, nz))
@@ -353,8 +380,12 @@ class Dreamer(nn.Module):
         it = np.nditer(v, flags=['multi_index'])
         idxs = []  
         imgs = []
-        heat = []
+        heat_imgs = []
+        no_heat_imgs = [] # TODO: get rid of this and organize
         labels = []
+        
+        # TODO: check if 'it' exists, otherwise create it
+        
         it = np.nditer(v, flags=["multi_index"])
         while not it.finished:
             idx = it.multi_index
@@ -368,9 +399,38 @@ class Dreamer(nn.Module):
             x = x - np.cos(theta)*1*0.05
             y = y - np.sin(theta)*1*0.05
             #imgs.append(self.capture_image(np.array([x, y, theta])))
-            img = get_frame_eval(torch.tensor([x, y, theta]), self._config, heat=True) # TODO: generate iff files dont exist
-            imgs.append(img[..., :-1])
-            heat.append(img[..., -1:])
+            img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
+            if self._config.realistic_dubins_heat == 0:
+                heat_img = get_heat_frame(img, self._config, heat=True) # TODO >> think of better name
+                no_heat_img = get_heat_frame(img, self._config, heat=False)
+            elif self._config.realistic_dubins_heat == 1:
+                heat_img = get_realistic_heat_frame(img, self._config, heat=True)
+                no_heat_img = get_realistic_heat_frame(img, self._config, heat=False)
+            else:
+                raise ValueError("Invalid realistic_dubins_heat")
+                
+            # fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+
+            # axes[0].imshow(img)
+            # axes[0].set_title("RGB")
+            # axes[0].axis("off")
+
+            # axes[1].imshow(img_heat.squeeze(), cmap="gray", vmin=0, vmax=255)
+            # axes[1].set_title("Heat")
+            # axes[1].axis("off")
+
+            # axes[2].imshow(img_no_heat.squeeze(), cmap="gray", vmin=0, vmax=255)
+            # axes[2].set_title("No Heat")
+            # axes[2].axis("off")
+
+            # plt.tight_layout()
+            # plt.savefig("test3.png")
+            
+            # print(img.shape, img_heat.shape, img_no_heat.shape); quit()
+            
+            imgs.append(img)
+            heat_imgs.append(heat_img)
+            no_heat_imgs.append(no_heat_img)
             idxs.append(idx)
             it.iternext()
         idxs = np.array(idxs)
@@ -379,14 +439,32 @@ class Dreamer(nn.Module):
         self.unsafe_idxs = np.where(np.array(labels) == 1)
         self.theta_lin = thetas[idxs[:,2]]
         self.imgs = imgs
-        self.heat = heat
+        self.heat_imgs = heat_imgs
+        self.no_heat_imgs = no_heat_imgs
         print('done!')
         
-    def get_latent(self, thetas, imgs, heat, heat_bool=False):
+        if cache_path is None:
+            cache_path = "cache/cache_data.pkl"
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        
+        with open(cache_path, "wb") as f:
+            pickle.dump({
+                "idxs": idxs,
+                "safe_idxs": self.safe_idxs,
+                "unsafe_idxs": self.unsafe_idxs,
+                "theta_lin": self.theta_lin,
+                "imgs": imgs,
+                "heat": heat,
+                "no_heat": no_heat,
+                "labels": labels
+            }, f)
+        print(f"Cache saved to {cache_path}")
+        
+    def get_latent(self, thetas, imgs, heat, no_heat, heat_bool=False):
         states = np.expand_dims(np.expand_dims(thetas,1),1)
         imgs = np.expand_dims(imgs, 1)
+        heat = heat if heat_bool else no_heat
         heat = np.expand_dims(heat, 1)
-        heat[:] = 255 if not heat_bool else heat
         # print(f"[dreamer_offline/Dreamer/get_latent] heat: {heat.mean()}")
         # print(imgs.shape); quit()
         dummy_acs = np.zeros((np.shape(thetas)[0], 1))
@@ -416,8 +494,8 @@ class Dreamer(nn.Module):
         self.eval()
         
         # Get latent predictions for both heat_bool False and True
-        g_x_cold, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat, heat_bool=False)
-        g_x_hot, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat, heat_bool=True)
+        g_x_cold, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=False)
+        g_x_hot, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=True)
         
         g_x_list = [np.array(g_x_cold), np.array(g_x_hot)]
         # print(g_x_list[0].mean(), g_x_list[1].mean()); quit()
@@ -612,12 +690,41 @@ def main(config):
         expert_dataset,
     ).to(config.device)
         
+    step = logger.step
     agent.requires_grad_(requires_grad=False)
+    
+    # TODO: complete
+    # is_eval = True # TODO: read in as optional parser arg
+    # eval_ckpt = "" # read in as optional parser arg
+    # if is_eval:
+    #     checkpoint = torch.load(logdir / eval_ckpt, weights_only=False)
+    #     pass # TODO: finish (prob copy paste from below)
+    
+    
     if (logdir / "latest.pt").exists():
-        checkpoint = torch.load(logdir / "latest.pt", weights_only=True)
+        print("Loading from checkpoint...")
+        checkpoint = torch.load(logdir / "latest.pt", weights_only=False)
         agent.load_state_dict(checkpoint["agent_state_dict"])
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
+        
         agent._should_pretrain._once = False
+        step = checkpoint.get("step")
+        logger = tools.Logger(logdir, step)
+        agent._logger = logger
+        agent._step = agent._logger.step // config.action_repeat
+        agent._wm._step = agent._step
+        print("Done loading")
+    # print(agent._wm._step); quit()
+    
+        try:
+            print("Warming up model with one train batch to stabilize state...")
+            agent.train()  # Ensure training mode
+            warmup_batch = next(agent._dataset)
+            agent._train(warmup_batch)
+            print("Warmup step completed.")
+            
+        except Exception as e:
+            print("[Warning] Warmup failed:", e)
 
     def log_plot(title, data):
         buf = BytesIO()
@@ -650,6 +757,7 @@ def main(config):
         log_plot("eval_recon_loss", eval_loss)
         logger.scalar("pretrain/train_recon_loss_min", np.min(train_loss))
         logger.scalar("pretrain/eval_recon_loss_min", np.min(eval_loss))
+        # print(logger.step); quit()
         logger.write(step=logger.step)
         del obs_mlp, obs_opt  # dont need to keep these
         return np.min(eval_loss)
@@ -682,6 +790,9 @@ def main(config):
         
         logger.write(step=logger.step)
         recon_eval = eval_obs_recon()  # testing observation reconstruction
+        
+        # if is_eval:
+        #     quit() # TODO: make this more graceful
 
         agent.train()
         return recon_eval, recon_eval
@@ -699,6 +810,7 @@ def main(config):
         ckpt_name = "rssm_ckpt" 
         best_pretrain_success = float("inf")
         for step in trange(
+            agent._step,
             total_train_steps,
             desc="Training the RSSM",
             ncols=0,
@@ -715,6 +827,7 @@ def main(config):
 
                 logger.image("pretrain/lx_plot", np.transpose(lx_plot, (2, 0, 1)))
                 
+                print(step)
                 best_pretrain_success = tools.save_checkpoint(
                     ckpt_name, step, success, best_pretrain_success, agent, logdir
                 )

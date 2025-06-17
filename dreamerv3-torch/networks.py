@@ -365,7 +365,7 @@ class MultiEncoder(nn.Module):
             heat_input_shape = tuple(self.heat_cnn_shapes.values())[0][:2] + (heat_input_ch,)
             self._heat_cnn = ConvEncoder(
                 heat_input_shape, 
-                cnn_depth,
+                int(cnn_depth/2),
                 act, 
                 norm, 
                 kernel_size, 
@@ -472,7 +472,7 @@ class MultiDecoder(nn.Module):
             self._heat_cnn = ConvDecoder(
                 feat_size,
                 shape,
-                cnn_depth,
+                int(cnn_depth/2),
                 act,
                 norm,
                 kernel_size,
