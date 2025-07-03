@@ -18,27 +18,225 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
-def show_heat_image(img_heat_array, save_path="test.png"):
-  img_heat_array = img_heat_array.squeeze(-1).astype(np.uint8)
-  Image.fromarray(img_heat_array).convert("L").save(save_path)
+DEFAULT_VEHICLE_TEMP = 255 / 4
+vehicle_temp = DEFAULT_VEHICLE_TEMP # FIXME: get rid of this eventually...
 
-def get_heat_frame(img_array, config):
-    heat_frame = img_array[..., 2:3]
+class HeatFrameGenerator:
+    def __init__(self, config, last_heat_frame=None):
+        self.config = config
+        self.last_heat_frame = last_heat_frame
+        self.H = None
+        self.W = None
+        self.cx = None
+        self.cy = None
+        self.radius = None
+
+    def _compute_geometry(self, img_shape):
+        self.H, self.W = img_shape[:2]
+        self.cx = int((self.config.obs_x - self.config.x_min) / (self.config.x_max - self.config.x_min) * self.W)
+        self.cy = int((self.config.y_max - self.config.obs_y) / (self.config.y_max - self.config.y_min) * self.H)
+        self.radius = int(1.5 * self.config.obs_r / (self.config.x_max - self.config.x_min) * self.W)
+
+    def _get_mask(self):
+        Y, X = np.ogrid[:self.H, :self.W]
+        mask = (X - self.cx)**2 + (Y - self.cy)**2 <= self.radius**2
+        mask = mask[:, :, None]
+        return mask
+
+    def _get_outline_mask(self):
+        Y, X = np.ogrid[:self.H, :self.W]
+        d2 = (X - self.cx)**2 + (Y - self.cy)**2
+        r1 = self.radius
+        return (d2 >= (r1 - 1)**2) & (d2 <= (r1 + 1)**2)
     
-    H, W, _ = img_array.shape
-    Y, X = np.ogrid[:H, :W]
+    def reset_vehicle_heat(self):
+      self.vehicle_heat = None
+      
+    def show_heat_image(self, img_heat_array, save_path="test.png"):
+      img_heat_array = img_heat_array.squeeze(-1).astype(np.uint8)
+      Image.fromarray(img_heat_array).convert("L").save(save_path)
+
+    def get_heat_frame_v0(self, img_array, heat=True):
+        '''
+        The failure set is the only object with "heat" in the image.
+        '''
+        self._compute_geometry(img_array.shape)
+        heat_frame = img_array[..., 2:3].copy()
+
+        mask = self._get_mask()
+        if heat:
+            heat_frame[mask] = 0
+        else:
+            heat_frame[:] = 255
+
+        return heat_frame
+
+    def get_heat_frame_v1(self, img_array, heat=True):
+        '''
+        The vehicle also has "heat" and becomes dark the instant it 
+        enters the unsafe region. 
+        '''
+        self._compute_geometry(img_array.shape)
+        obstacle = img_array[..., 2:3].copy()
+        vehicle = img_array[..., 0:1].copy()
+        obstacle_mask = self._get_mask()
+        
+        if heat:
+            heat_frame = obstacle
+            heat_frame[obstacle_mask] = 255 / 2
+
+            vehicle_mask = (vehicle == 0)
+            heat_frame[vehicle_mask & obstacle_mask] = 0
+            heat_frame[vehicle_mask & ~obstacle_mask] = 255 / 4
+        else:
+            heat_frame = np.ones_like(vehicle) * 255
+            vehicle_mask = (vehicle == 0)
+            heat_frame[vehicle_mask] = 255 / 4
+
+            # outline_mask = self._get_outline_mask()
+            # heat_frame[outline_mask] = 0
+
+        return heat_frame
     
-    cx = int((config.obs_x - config.x_min) / (config.x_max - config.x_min) * W)
-    cy = int((config.y_max - config.obs_y) / (config.y_max - config.y_min) * H)
-    radius = int(config.obs_r / (config.x_max - config.x_min) * W)
+    def get_heat_frame_v2(self, img_array, heat=True, alpha_in=3, alpha_out=5):
+        '''
+        partial observability
+        
+        if you spend too long in unsafe, become different color when exiting (RGB)
+        the heat map should be the same as v3
+        '''
+        return self.get_heat_frame_v3(img_array, heat, alpha_in=alpha_in, alpha_out=alpha_out)
 
-    mask = (X - cx)**2 + (Y - cy)**2 <= radius**2
-    heat_frame[mask] = 0
-    # show_heat_image(heat_frame); quit()
+    def get_heat_frame_v3(self, img_array, heat=True, alpha_in=3, alpha_out=5):
+      '''
+      full observability
+      
+      The vehicle becomes darker (lower value) the longer it is inside the obstacle region.
+      When it exits the region, it gradually cools down (brightness increases).
+      
+      alpha_in: how quickly heat accumulates inside the region
+      alpha_out: how quickly it fades outside
+      '''
+      self._compute_geometry(img_array.shape)
+      obstacle = img_array[..., 2:3].copy()
+      vehicle = img_array[..., 0:1].copy()
+      obstacle_mask = self._get_mask()
+      
+      if heat:
+          heat_frame = obstacle.copy()
+          heat_frame[obstacle_mask] = 255 / 2
 
-    return heat_frame
+          vehicle_mask = (vehicle <= DEFAULT_VEHICLE_TEMP)
+          inside_mask = vehicle_mask & obstacle_mask
+          outside_mask = vehicle_mask & ~obstacle_mask
 
-def get_frame(states, config, curr_traj_count=0):
+          global vehicle_temp
+          if 'vehicle_temp' not in globals():
+            vehicle_temp = DEFAULT_VEHICLE_TEMP
+
+          # Apply heat value
+          heat_frame[inside_mask] = vehicle_temp
+          heat_frame[outside_mask] = vehicle_temp
+
+          # Update temperature
+          if np.any(outside_mask) and not np.any(inside_mask):
+              # All vehicle pixels are outside
+              vehicle_temp = min(DEFAULT_VEHICLE_TEMP, vehicle_temp + alpha_out)
+          elif np.any(inside_mask):
+              # Some or all vehicle pixels are inside
+              vehicle_temp = max(0, vehicle_temp - alpha_in)
+            
+      else:
+          heat_frame = np.ones_like(vehicle) * 255
+          vehicle_mask = (vehicle == 0)
+          heat_frame[vehicle_mask] = DEFAULT_VEHICLE_TEMP
+
+      return heat_frame
+    
+    def get_rgb_v2(self, img_array, config, heat=True, alpha_in=10, alpha_out=20):
+        """
+        partial observability
+        
+        Vehicle turns blue when it enters an obstacle.
+        When it leaves fully, it stays blue (permanent state change).
+        """
+        self._compute_geometry(img_array.shape)
+
+        obstacle_mask = self._get_mask()
+
+        # Refined vehicle mask
+        vehicle_mask = (
+            (img_array[..., 2:3] > 255/2) & 
+            (img_array[..., 0:1] < 100) & 
+            (img_array[..., 1:2] < 100)
+        )
+
+        inside_mask = vehicle_mask & obstacle_mask
+        outside_mask = vehicle_mask & ~obstacle_mask
+
+        rgb_out = img_array.copy()
+
+        # Global state: has the vehicle ever entered?
+        global vehicle_has_entered
+        if 'vehicle_has_entered' not in globals():
+            vehicle_has_entered = False
+
+        if heat:
+            # Set the flag if vehicle touches the obstacle
+            if np.any(inside_mask):
+                vehicle_has_entered = True
+
+            # If vehicle has entered and fully left, change color
+            if vehicle_has_entered and not np.any(inside_mask):
+                # Apply a permanent color change (e.g., cyan or light blue)
+                rgb_out[..., 2:3][vehicle_mask] = 255/2  # Custom color
+            else:
+                pass
+
+        return rgb_out
+
+    def get_rgb_v3(self, img_array, config, heat=True, alpha_in=10, alpha_out=20):
+        """
+        full observability.
+        
+        Tint the vehicle in the blue channel only.
+
+        vehicle_mask : pixels whose *blue* value is near-zero are considered “vehicle”.
+        Heat builds (alpha_in) while they sit inside obstacle_mask
+        and cools (alpha_out) when they leave.
+        """
+        self._compute_geometry(img_array.shape)
+        
+        obstacle_mask = self._get_mask()
+        vehicle_mask = (
+          (img_array[..., 2:3] > 255/2) & 
+          (img_array[..., 0:1] < 100) & 
+          (img_array[..., 1:2] < 100)
+        )
+
+        inside_mask = vehicle_mask & obstacle_mask
+        outside_mask = vehicle_mask & ~obstacle_mask
+
+        rgb_out = img_array.copy()
+
+        global vehicle_temp_rgb
+        if 'vehicle_temp_rgb' not in globals():
+            vehicle_temp_rgb = 255
+
+        if heat:
+            rgb_out[..., 2:3][inside_mask] = vehicle_temp_rgb
+            rgb_out[..., 2:3][outside_mask] = vehicle_temp_rgb
+
+            if not np.any(inside_mask):
+                # vehicle_temp_rgb = min(255, vehicle_temp_rgb + alpha_out)
+                pass
+            else:
+                vehicle_temp_rgb = max(255/2, vehicle_temp_rgb - alpha_in)
+
+        return rgb_out
+      
+
+def get_frame(states, config, curr_traj_count=0, last_heat_frame=None):
   dt = config.dt
   v = config.speed
   fig,ax = plt.subplots()
@@ -63,22 +261,33 @@ def get_frame(states, config, curr_traj_count=0):
   img_array = np.array(img)
   
   # generate heat frame of image
+  hot = False
+  heat_opt = config.heat_mode
+  heat_gen = HeatFrameGenerator(config, last_heat_frame)
+  
   if config.multimodal:
-    img_heat_array = get_heat_frame(copy.deepcopy(img_array), config)
-    if curr_traj_count >= config.heat_prop * config.num_trajs:
-      img_heat_array[:] = 255
+    hot = curr_traj_count >= config.heat_prop * config.num_trajs
+    if heat_opt == 0:
+      img_heat_array = heat_gen.get_heat_frame_v0(copy.deepcopy(img_array), heat=hot)
+    elif heat_opt == 1:
+      img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
+    elif heat_opt == 2:
+      img_heat_array = heat_gen.get_heat_frame_v2(copy.deepcopy(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
+    elif heat_opt == 3:
+      img_heat_array = heat_gen.get_heat_frame_v3(np.array(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_array = heat_gen.get_rgb_v3(copy.deepcopy(img_array), config, heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+    else:
+      raise ValueError("Invalid heat_mode")
+      
     img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
   else:
     img_array_combined = img_array
   
-  # img = img_array_combined[..., :3].astype(np.uint8)
-  # img_pil = Image.fromarray(img)
-  # img_pil.save("test2.png"); quit()
-  
   plt.close(fig)
-  return img_array_combined
+  return img_array_combined, hot
    
-def get_frame_eval(states, config, heat=True):
+def get_frame_eval(states, config):
   dt = config.dt
   v = config.speed
   fig,ax = plt.subplots()
@@ -90,7 +299,7 @@ def get_frame_eval(states, config, heat=True):
   circle = patches.Circle([config.obs_x, config.obs_y], config.obs_r, edgecolor=(1,0,0), facecolor=(1,0,0))
   # Add the circle patch to the axis
   ax.add_patch(circle)
-  plt.quiver(states[0], states[1], dt*v*torch.cos(states[2]), dt*v*torch.sin(states[2]), angles='xy', scale_units='xy', minlength=0,width=0.1, scale=0.18,color=(0,0,1), zorder=3)
+  plt.quiver(states[0], states[1], dt*v*torch.cos(states[2]), dt*v*torch.sin(states[2]), angles='xy', scale_units='xy', minlength=0, width=0.1, scale=0.18, color=(0,0,1), zorder=3)
   plt.scatter(states[0], states[1],s=20, color=(0,0,1), zorder=3)
   plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
@@ -102,21 +311,8 @@ def get_frame_eval(states, config, heat=True):
   img = Image.open(buf).convert('RGB')
   img_array = np.array(img)
   
-  # generate heat frame of image
-  if config.multimodal:
-    img_heat_array = get_heat_frame(copy.deepcopy(img_array), config)
-    if not heat:
-      img_heat_array[:] = 255
-    img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
-  else:
-    img_array_combined = img_array
-  
-  # img = img_array_combined[..., :3].astype(np.uint8)
-  # img_pil = Image.fromarray(img)
-  # img_pil.save("test2.png"); quit()
-  
   plt.close(fig)
-  return img_array_combined
+  return img_array
    
 
 def get_init_state(config):
@@ -124,6 +320,7 @@ def get_init_state(config):
   states = torch.zeros(3)
   while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
     states = torch.rand(3)
+    
     states[0] *= (config.x_max-config.buffer) - (config.x_min + config.buffer)
     states[1] *= (config.y_max-config.buffer) - (config.y_min + config.buffer)
     states[0] += config.x_min + config.buffer
@@ -132,14 +329,21 @@ def get_init_state(config):
   # so that the trajectory doesn't immediately go out of bounds
   states[2] = torch.atan2(-states[1], -states[0]) + np.random.normal(0, 1)
   states[2] = states[2] % (2*np.pi)
+  
+  if config.test:
+    states[0] = -0.8 # TODO: comment out
+    states[1] = 0.
+    states[2] = 0.
+    
   return states
 
 def gen_one_traj_img(config, curr_traj_count=0):
   states = get_init_state(config)
-
+  
   state_obs = []
   img_obs = []
   heat_obs = []
+  heat_gt = []
   state_gt = []
   dones = []
   acs = []
@@ -150,7 +354,10 @@ def gen_one_traj_img(config, curr_traj_count=0):
   for t in range(config.data_length):
     # random between -u_max and u_max
     ac = torch.rand(1) * 2 * u_max - u_max
-
+    
+    if config.test:
+      ac = torch.tensor(0)
+    
     # dubin's dynamics
     states_next = torch.rand(3)
     states_next[0] = states[0] + v*dt*torch.cos(states[2])
@@ -167,29 +374,36 @@ def gen_one_traj_img(config, curr_traj_count=0):
       dones.append(1)
     else:
       dones.append(0)
-        
+      
     acs.append(ac)
-    img_array = get_frame(states, config, curr_traj_count=curr_traj_count)
+    
+    if len(heat_obs) > 0: last_heat_frame = heat_obs[-1]
+    else: last_heat_frame = np.array([1, 1])
+        
+    img_array, hot = get_frame(states, config, curr_traj_count=curr_traj_count, last_heat_frame=last_heat_frame)
     if config.multimodal: 
-      img_obs.append(img_array[..., :3])
+      img_obs.append(img_array[..., :3]) # TODO: turn into dict and grab
       # print(img_array[..., -1:].mean()); quit()
       heat_obs.append(img_array[..., -1:])
+      # print(vehicle_temp / DEFAULT_VEHICLE_TEMP)
+      heat_gt.append(1. - vehicle_temp / DEFAULT_VEHICLE_TEMP) # TODO: store this in a variable
     else: 
       img_obs.append(img_array)
       heat_obs.append(img_array[..., 0] * 0)
+      heat_gt.append(0.0) # TODO: should also be vehicle_temp / DEFAULT_VEHICLE_TEMP
     states = states_next
     if dones[-1] == 1:
       break
-  return state_obs, acs, state_gt, img_obs, heat_obs, dones
+  return state_obs, acs, state_gt, img_obs, heat_obs, heat_gt, dones
 
 def generate_trajs(config):
   demos = []
   curr_traj_count = 0
   for i in range(config.num_trajs):
-    state_obs, acs, state_gt, img_obs, heat_obs, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
+    state_obs, acs, state_gt, img_obs, heat_obs, heat_gt, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
     # print(np.mean(img_obs), np.mean(heat_obs)); quit()
     demo = {}
-    demo['obs'] = {'image': img_obs, 'heat': heat_obs, 'state': state_obs, 'priv_state': state_gt}
+    demo['obs'] = {'image': img_obs, 'heat': heat_obs, 'priv_heat': heat_gt, 'state': state_obs, 'priv_state': state_gt}
     demo['actions'] = acs
     demo['dones'] = dones
     demos.append(demo)
@@ -197,7 +411,7 @@ def generate_trajs(config):
     curr_traj_count += 1
 
   if config.multimodal:
-    with open('train_data/wm_demos' + str(config.size[0]) + '_multimodal_filled_v2_no_heat_test.pkl', 'wb') as f:
+    with open(f"{config.dataset_path}_{config.alpha_in}" + ".pkl", 'wb') as f: # TODO: read from config
       pickle.dump(demos, f)
   else:
     with open('wm_demos' + str(config.size[0]) + '.pkl', 'wb') as f:
@@ -212,12 +426,12 @@ def recursive_update(base, update):
 
 if __name__=='__main__':      
     parser = argparse.ArgumentParser()
-   
+    parser.add_argument("--config_path", default="configs.yaml", type=str)
     config, remaining = parser.parse_known_args()
 
     yaml = yaml.YAML(typ="safe", pure=True)
     configs = yaml.load(
-        (pathlib.Path(sys.argv[0]).parent / "../configs.yaml").read_text()
+        (pathlib.Path(sys.argv[0]).parent / f"../{config.config_path}").read_text()
     )
 
     name_list = ["defaults"]

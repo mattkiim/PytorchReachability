@@ -251,11 +251,16 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
 
             # heat-based check
             heat = traj['obs']['priv_heat'][t]
+            
+            if config.heat_mode < 2:
+                heat_failure = heat
+            elif config.heat_mode == 2 or config.heat_mode == 3:
+                heat_failure = heat > config.heat_threshold # TODO: tune / ask
             # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
             if "heat" in traj['obs']:
-                transition["failure"] &= heat
+                transition["failure"] &= heat_failure
                 
             # check if state is in obstacle
             # transition["failure"] = np.array(np.linalg.norm(traj['obs']['priv_state'][t][:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r, dtype=np.float32) # TODO: make sure it's in obstacle for heat as well

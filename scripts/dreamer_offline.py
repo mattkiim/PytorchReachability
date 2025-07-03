@@ -35,7 +35,7 @@ from io import BytesIO
 from PIL import Image
 
 to_np = lambda x: x.detach().cpu().numpy()
-from generate_data_traj_cont import get_frame_eval, get_heat_frame, get_realistic_heat_frame
+from generate_data_traj_cont import get_frame_eval, HeatFrameGenerator
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
@@ -288,7 +288,7 @@ class Dreamer(nn.Module):
                     if pos.numel() > 0:
                         lx_loss += torch.relu(gamma - pos).mean()
                     if neg.numel() > 0:
-                        lx_loss += torch.relu(gamma + neg).mean() # multiplying this didn't change anything
+                        lx_loss += torch.relu(gamma + neg).mean()
 
                     lx_loss *=  self._config.margin_head["loss_scale"]
                     if step < 3000:
@@ -321,7 +321,7 @@ class Dreamer(nn.Module):
         self._update_running_metrics(metrics)
         self._maybe_log_metrics()
         self._step += 1
-        print(f"[Dreamer/pretrain_model_only]: step: {self._step}")
+        # print(f"[Dreamer/pretrain_model_only]: step: {self._step}")
         self._logger.step = self._step
         
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
@@ -347,6 +347,7 @@ class Dreamer(nn.Module):
     
     def load_cache(self):
         cache_path = self._config.cache_path
+        cache_path = os.path.dirname(cache_path + self._config.alpha_in + ".pkl")
 
         if not os.path.exists(cache_path):
             print(f"No cache file found at {cache_path}")
@@ -360,8 +361,8 @@ class Dreamer(nn.Module):
         self.unsafe_idxs = data["unsafe_idxs"]
         self.theta_lin = data["theta_lin"]
         self.imgs = data["imgs"]
-        self.heat = data["heat"]
-        self.no_heat = data["no_heat"]
+        self.heat_imgs = data["heat"]
+        self.no_heat_imgs = data["no_heat"]
         self.v = np.zeros((self._config.nx, self._config.ny, 3))
         self.nz = 3  # assuming fixed
 
@@ -399,34 +400,24 @@ class Dreamer(nn.Module):
             x = x - np.cos(theta)*1*0.05
             y = y - np.sin(theta)*1*0.05
             #imgs.append(self.capture_image(np.array([x, y, theta])))
+            gen = HeatFrameGenerator(self._config)
             img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
-            if self._config.realistic_dubins_heat == 0:
-                heat_img = get_heat_frame(img, self._config, heat=True) # TODO >> think of better name
-                no_heat_img = get_heat_frame(img, self._config, heat=False)
-            elif self._config.realistic_dubins_heat == 1:
-                heat_img = get_realistic_heat_frame(img, self._config, heat=True)
-                no_heat_img = get_realistic_heat_frame(img, self._config, heat=False)
+            if self._config.heat_mode == 0:
+                heat_img = gen.get_heat_frame_v0(img, heat=True)
+                no_heat_img = gen.get_heat_frame_v0(img, heat=False)
+            elif self._config.heat_mode == 1:
+                heat_img = gen.get_heat_frame_v1(img, heat=True)
+                no_heat_img = gen.get_heat_frame_v1(img, heat=False)
+            elif self._config.heat_mode == 2:
+                img = gen.get_rgb_v2(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
+                heat_img = gen.get_heat_frame_v2(img, heat=True)
+                no_heat_img = gen.get_heat_frame_v2(img, heat=False)
+            elif self._config.heat_mode == 3:
+                img = gen.get_rgb_v3(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
+                heat_img = gen.get_heat_frame_v3(img, heat=True)
+                no_heat_img = gen.get_heat_frame_v3(img, heat=False)
             else:
-                raise ValueError("Invalid realistic_dubins_heat")
-                
-            # fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-
-            # axes[0].imshow(img)
-            # axes[0].set_title("RGB")
-            # axes[0].axis("off")
-
-            # axes[1].imshow(img_heat.squeeze(), cmap="gray", vmin=0, vmax=255)
-            # axes[1].set_title("Heat")
-            # axes[1].axis("off")
-
-            # axes[2].imshow(img_no_heat.squeeze(), cmap="gray", vmin=0, vmax=255)
-            # axes[2].set_title("No Heat")
-            # axes[2].axis("off")
-
-            # plt.tight_layout()
-            # plt.savefig("test3.png")
-            
-            # print(img.shape, img_heat.shape, img_no_heat.shape); quit()
+                raise ValueError("Invalid heat_mode")
             
             imgs.append(img)
             heat_imgs.append(heat_img)
@@ -445,7 +436,7 @@ class Dreamer(nn.Module):
         
         if cache_path is None:
             cache_path = "cache/cache_data.pkl"
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        os.makedirs(os.path.dirname(cache_path + self._config.alpha_in + ".pkl"), exist_ok=True)
         
         with open(cache_path, "wb") as f:
             pickle.dump({
@@ -454,8 +445,8 @@ class Dreamer(nn.Module):
                 "unsafe_idxs": self.unsafe_idxs,
                 "theta_lin": self.theta_lin,
                 "imgs": imgs,
-                "heat": heat,
-                "no_heat": no_heat,
+                "heat": heat_imgs,
+                "no_heat": no_heat_imgs, # NOTE: why did i add this? ans: i think cache is only for eval
                 "labels": labels
             }, f)
         print(f"Cache saved to {cache_path}")
@@ -670,6 +661,8 @@ def main(config):
     # expert episode buffer
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
+    
+    config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
     tools.fill_expert_dataset_dubins(config, expert_eps)
     expert_dataset = make_dataset(expert_eps, config)
     

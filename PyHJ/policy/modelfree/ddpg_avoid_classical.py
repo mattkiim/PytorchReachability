@@ -50,6 +50,7 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
         self,
         critic: Optional[torch.nn.Module],
         critic_optim: Optional[torch.optim.Optimizer],
+        critic_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         tau: float = 0.005,
         gamma: float = 0.99,
         exploration_noise: Optional[BaseNoise] = GaussianNoise(sigma=0.1),
@@ -59,6 +60,7 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
         action_bound_method: str = "clip",
         actor: Optional[torch.nn.Module] = None, # control policy
         actor_optim: Optional[torch.optim.Optimizer] = None,
+        actor_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         actor_gradient_steps: int = 5,
         **kwargs: Any,
     ) -> None:
@@ -75,11 +77,13 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
             self.critic_old = deepcopy(critic)
             self.critic_old.eval()
             self.critic_optim: torch.optim.Optimizer = critic_optim
+            self.critic_scheduler = critic_scheduler
         if actor is not None and actor_optim is not None:
             self.actor: torch.nn.Module = actor
             self.actor_old = deepcopy(actor)
             self.actor_old.eval()
             self.actor_optim: torch.optim.Optimizer = actor_optim
+            self.actor_scheduler = actor_scheduler
         
         assert 0.0 <= tau <= 1.0, "tau should be in [0, 1]"
         self.tau = tau
@@ -160,7 +164,8 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
 
     @staticmethod
     def _mse_optimizer(
-        batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
+        batch: Batch, critic: torch.nn.Module, 
+        optimizer: torch.optim.Optimizer, 
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """A simple wrapper script for updating critic network."""
         weight = getattr(batch, "weight", 1.0)

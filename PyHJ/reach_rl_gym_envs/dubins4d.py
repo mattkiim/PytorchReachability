@@ -20,10 +20,10 @@ class Dubins_Env_4D(gym.Env):
         self.a_max = 1
         self.v_max = 3
         self.high = np.array([
-            1.1, 1.1, 1.1, 1.1, 0
+            1.5, 1.5, 1.5, 1.5, 0
         ])
         self.low = np.array([
-            -1.1, -1.1, -1.1, -1.1, self.v_max
+            -1.5, -1.5, -1.5, -1.5, self.v_max
         ])
         self.observation_space = spaces.Box(low=self.low, high=self.high, dtype=np.float32)
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32) # joint action space
@@ -63,7 +63,7 @@ class Dubins_Env_4D(gym.Env):
         if initial_state is None:
             theta = np.random.uniform(low=0, high=2*np.pi)
 
-            self.state = np.random.uniform(low=[-1.1, -1.1, -1.1, -1.1, 0.], high=[1.1, 1.1, 1.1, 1.1, self.v_max], size=(5,))
+            self.state = np.random.uniform(low=[-1.5, -1.5, -1.5, -1.5, 0.], high=[1.5, 1.5, 1.5, 1.5, self.v_max], size=(5,))
             self.state[2] = np.sin(theta)
             self.state[3] = np.cos(theta)        
         else:
@@ -79,8 +79,8 @@ class Dubins_Env_4D(gym.Env):
         fig1, axes1 = plt.subplots(len(vs),len(thetas))
         fig2, axes2 = plt.subplots(len(vs),len(thetas))
         X, Y = np.meshgrid(
-            np.linspace(-1.1, 1.1, nx, endpoint=True),
-            np.linspace(-1.1, 1.1, ny, endpoint=True),
+            np.linspace(-1.5, 1.5, nx, endpoint=True),
+            np.linspace(-1.5, 1.5, ny, endpoint=True),
         )
         for i in range(len(thetas)):
             for j in range(len(vs)):
@@ -97,8 +97,8 @@ class Dubins_Env_4D(gym.Env):
                         V[ii,jj] = evaluate_V( tmp_point, policy, critic)
             
         
-                axes1[j,i].imshow(V>0, extent=(-1.1, 1.1, -1.1, 1.1), origin='lower')
-                axes2[j,i].imshow(V, extent=(-1.1, 1.1, -1.1, 1.1), vmin=-1., vmax=1., origin='lower') 
+                axes1[j,i].imshow(V>0, extent=(-1.5, 1.5, -1.5, 1.5), origin='lower')
+                axes2[j,i].imshow(V, extent=(-1.5, 1.5, -1.5, 1.5), vmin=-1., vmax=1., origin='lower') 
                 const = Circle((-0.0, -0.0), 0.5, color='red', fill=False)  # fill=False makes it a ring
                 # Add the circle to the axes
                 axes1[j,i].add_patch(const)
@@ -122,8 +122,8 @@ class Dubins_Env_4D(gym.Env):
         fig1, axes1 = plt.subplots(1,len(plot_idxs))
         fig2, axes2 = plt.subplots(1,len(plot_idxs))
         X, Y = np.meshgrid(
-            np.linspace(-1.1, 1.1, grid.shape[0], endpoint=True),
-            np.linspace(-1.1, 1.1, grid.shape[1], endpoint=True),
+            np.linspace(-1.5, 1.5, grid.shape[0], endpoint=True),
+            np.linspace(-1.5, 1.5, grid.shape[1], endpoint=True),
         )
         thetas_lin = np.linspace(0, 2*np.pi, grid.shape[2], endpoint=True)
 
@@ -156,12 +156,12 @@ class Dubins_Env_4D(gym.Env):
             
             if i in plot_idxs:
                 plot_idx = plot_idxs.index(i)
-                axes1[plot_idx].imshow(V>0, extent=(-1.1, 1.1, -1.1, 1.1), origin='lower')
-                axes2[plot_idx].imshow(V, extent=(-1.1, 1.1, -1.1, 1.1), vmin=-1., vmax=1., origin='lower')    
+                axes1[plot_idx].imshow(V>0, extent=(-1.5, 1.5, -1.5, 1.5), origin='lower')
+                axes2[plot_idx].imshow(V, extent=(-1.5, 1.5, -1.5, 1.5), vmin=-1., vmax=1., origin='lower')    
                 axes1[plot_idx].set_title('theta = {}'.format(np.round(thetas_lin[i],2)), fontsize=12,)
                 axes2[plot_idx].set_title('f1 = {}'.format(np.round(f1_grid,2)), fontsize=12,)
                 
-                axes1[plot_idx].contour(grid[:,:,i].T, levels=[0.], colors='purple', linewidths=2, origin='lower', extent=[-1.1, 1.1, -1.1, 1.1])
+                axes1[plot_idx].contour(grid[:,:,i].T, levels=[0.], colors='purple', linewidths=2, origin='lower', extent=[-1.5, 1.5, -1.5, 1.5])
                 
         print("TP: {}, FP: {}, FN: {}, TN: {}".format(tp, fp, fn, tn))
         prec = tp / (tp + fp) if (tp + fp) > 0 else 0

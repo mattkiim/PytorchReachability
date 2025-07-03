@@ -22,3 +22,6 @@ logs/
 wm_demos*.pkl
 test*
 cache/
+train_data
+eval
+gt_dubins
