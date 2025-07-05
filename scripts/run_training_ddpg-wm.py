@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import pickle
 
 import warnings
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -9,7 +10,7 @@ import gymnasium #as gym
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-
+from itertools import product
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -133,8 +134,6 @@ if config.multimodal:
         dtype=np.uint8
     )
 
-# print(env.observation_space_full); quit()
-    
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
 # print(env.observation_space_full['image']); quit()
 
@@ -169,13 +168,14 @@ train_envs = DummyVectorEnv(
 test_envs = DummyVectorEnv(
     [lambda: gymnasium.make(args.task, params = [wm, offline_dataset, config]) for _ in range(args.test_num)]
 )
-
-
+# -------
 # seed
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
-train_envs.seed(args.seed)
+train_envs.seed(args.seed) # problematic line
 test_envs.seed(args.seed)
+
+# -------
 
 # model
 if args.actor_activation == 'ReLU':
@@ -208,6 +208,7 @@ if args.critic_net is not None:
 else:
     # report error:
     raise ValueError("Please provide critic_net!")
+
 
 critic = Critic(critic_net, device=args.device).to(args.device)
 critic_optim = torch.optim.AdamW(critic.parameters(), lr=args.critic_lr, weight_decay=args.weight_decay_pyhj)
@@ -324,89 +325,107 @@ if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
-def make_cache(config, thetas): # TODO: set static heat values. 0 outside brt, and x inside
+def make_cache(config, thetas, heat_values):
     nx, ny = config.nx, config.ny
     cache = {}
-    for theta in thetas:
-        v = np.zeros((nx, ny))
-        xs = np.linspace(-1.5, 1.5, nx, endpoint=True)
-        ys = np.linspace(-1.5, 1.5, ny, endpoint=True)
-        key = theta
-        print('creating cache for key', key)
-        idxs, imgs_prev, thetas, thetas_prev = [], [], [], []
-        heat_imgs, no_heat_imgs = [], []
-        states = []
-        
-        xs_prev = xs - config.dt * config.speed * np.cos(theta)
-        ys_prev = ys - config.dt * config.speed * np.sin(theta)
-        theta_prev = theta
-        it = np.nditer(v, flags=["multi_index"])
-        while not it.finished:
-            idx = it.multi_index
-            x_prev = xs_prev[idx[0]]
-            y_prev = ys_prev[idx[1]]
-            thetas.append(theta)
-            thetas_prev.append(theta_prev)
-            prev_state = torch.tensor([x_prev, y_prev, theta_prev])
-            img = get_frame_eval(prev_state, config)
-            imgs_prev.append(img)
+
+    xs = np.linspace(-1.5, 1.5, nx, endpoint=True)
+    ys = np.linspace(-1.5, 1.5, ny, endpoint=True)
+
+    for heat_value in heat_values:
+        for theta in thetas:
+            v = np.zeros((nx, ny))
+            key = (theta, heat_value)
+            print('creating cache for key', key)
+
+            idxs = []
+            imgs_prev = []
+            heat_imgs = []
+            no_heat_imgs = []
+            thetas_prev = []
+            heat_values_prev = []
+            states = []
+
+            # Compute previous positions assuming constant motion
+            xs_prev = xs - config.dt * config.speed * np.cos(theta)
+            ys_prev = ys - config.dt * config.speed * np.sin(theta)
+            theta_prev = theta
+
+            it = np.nditer(v, flags=["multi_index"])
+            while not it.finished:
+                idx = it.multi_index
+                x_prev = xs_prev[idx[0]]
+                y_prev = ys_prev[idx[1]]
+
+                prev_state = torch.tensor([x_prev, y_prev, theta_prev])
+                img = get_frame_eval(prev_state, config)
+                gen = HeatFrameGenerator(config)
+                gen._compute_geometry(img.shape)
+
+                # Generate heat and no-heat images
+                # TODO: when i make the images, i need to get them at specific heat_values. theta is observable, but we are not doing that
+                if config.heat_mode == 0:
+                    heat = gen.get_heat_frame_v0(img, heat=True)
+                    no_heat = gen.get_heat_frame_v0(img, heat=False)
+                elif config.heat_mode == 1:
+                    heat = gen.get_heat_frame_v1(img, heat=True)
+                    no_heat = gen.get_heat_frame_v1(img, heat=False)
+                elif config.heat_mode == 2:
+                    img = gen.get_rgb_v2(img, config, heat=True)
+                    heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=heat_value)
+                    no_heat, _ = gen.get_heat_frame_v2(img, heat=False, heat_value=heat_value)
+                elif config.heat_mode == 3:
+                    img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
+                    heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=heat_value)
+                    no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value)
+                else:
+                    raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
+
+                # Accumulate data
+                idxs.append(idx)
+                imgs_prev.append(img)
+                heat_imgs.append(heat)
+                no_heat_imgs.append(no_heat)
+                thetas_prev.append(theta_prev)
+                heat_values_prev.append(heat_value)
+                states.append(prev_state)
+
+                it.iternext()
+
+            # Convert to arrays
+            idxs = np.array(idxs)
+            theta_prev_lin = np.array(thetas_prev)
+            heat_values_prev = np.array(heat_values_prev)
+
+            cache[key] = [
+                idxs,
+                imgs_prev,
+                heat_imgs,
+                no_heat_imgs,
+                theta_prev_lin,
+                states,
+            ]
             
-            gen = HeatFrameGenerator(config)
+    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             
-            if config.heat_mode == 0:
-                heat = gen.get_heat_frame_v0(img, heat=True)
-                no_heat = gen.get_heat_frame_v0(img, heat=False)
-            elif config.heat_mode == 1:
-                heat = gen.get_heat_frame_v1(img, heat=True)
-                no_heat = gen.get_heat_frame_v1(img, heat=False)
-            elif config.heat_mode == 2:
-                img = gen.get_rgb_v2(img, config, heat=True) # TODO: also load for no-heat
-                heat = gen.get_heat_frame_v2(img, heat=True)
-                no_heat = gen.get_heat_frame_v2(img, heat=False)
-            elif config.heat_mode == 3:
-                img = gen.get_rgb_v2(img, config, heat=True)
-                heat = gen.get_heat_frame_v3(img, heat=True)
-                no_heat = gen.get_heat_frame_v3(img, heat=False)
-                
-            heat_imgs.append(heat)
-            no_heat_imgs.append(no_heat)
-            
-            states.append(prev_state)
-            
-            idxs.append(idx)        
-            it.iternext()
-        idxs = np.array(idxs)
-        theta_prev_lin = np.array(thetas_prev)
-        cache[theta] = [idxs, imgs_prev, heat_imgs, no_heat_imgs, theta_prev_lin, states]
-    
+    with open(cache_path, 'wb') as f:
+        pickle.dump(cache, f)
     return cache
 
-# def load_cache(config):
-#     import pickle
-#     cache_path = config.cache_path
 
-#     if not os.path.exists(cache_path):
-#         print(f"No cache file found at {cache_path}")
-#         return None  # safer than False
+def load_cache(config):
+    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
 
-#     with open(cache_path, "rb") as f:
-#         data = pickle.load(f)
+    if not os.path.exists(cache_path):
+        raise FileNotFoundError(f"Cache file not found at: {cache_path}")
+    else:
+        print(f"Loading cache at {cache_path}")
+        
+    with open(cache_path, 'rb') as f:
+        cache = pickle.load(f)
 
-#     # Unpack what was saved in cache
-#     cache = {
-#         "idxs": data["idxs"],
-#         "safe_idxs": data["safe_idxs"],
-#         "unsafe_idxs": data["unsafe_idxs"],
-#         "theta_lin": data["theta_lin"],
-#         "imgs": data["imgs"],
-#         "heat_imgs": data["heat"],
-#         "no_heat_imgs": data["no_heat"],
-#         "v": np.zeros((config.nx, config.ny, 3)),  # assumed
-#         "nz": 3  # assumed
-#     }
-
-#     print(f"Cache loaded from {cache_path}")
-#     return cache
+    return cache
     
 def get_latent(wm, thetas, imgs, heat_imgs, no_heat_imgs, heat_bool=True): 
     # TODO 1: turn 'imgs' + 'heat' into a dictionary called 'obs'
@@ -462,7 +481,8 @@ def evaluate_V(state):
     tmp = policy.critic(tmp_batch.obs, policy(tmp_batch, model="actor_old").act)
     return tmp.cpu().detach().numpy().flatten()
 
-def rollout_dubins(lz, feat, post, states, policy, T=50,
+@torch.no_grad()
+def rollout_dubins(lz, feat, post, states, policy, T=100,
                    rollout_batch_size=100, heat=True):
     post = {k: v.clone() for k, v in post.items()}
     # Make sure the shape matches what wm.dynamics.get_feat expects
@@ -478,7 +498,7 @@ def rollout_dubins(lz, feat, post, states, policy, T=50,
         end = min(start + rollout_batch_size, N)
 
         post_b = {k: v[start:end] for k, v in post.items()}
-        feat_b = feat[start:end].clone()          # current actor input
+        feat_b = torch.tensor(feat[start:end], dtype=torch.float32).to(config.device).clone()          # current actor input
         states_b = states[start:end].clone()      # x, y, theta
         x, y, theta = states_b.t()
         unsafe = torch.zeros_like(x, dtype=torch.bool)
@@ -495,7 +515,7 @@ def rollout_dubins(lz, feat, post, states, policy, T=50,
             if heat:
                 x += config.speed * torch.cos(theta) * config.dt
                 y += config.speed * torch.sin(theta) * config.dt
-                theta += act[:, 0] * config.dt
+                theta = theta + act[:, 0] * config.dt
                 theta = (theta + np.pi) % (2 * np.pi) - np.pi
                 unsafe |= ((x - config.obs_x) ** 2 +
                            (y - config.obs_y) ** 2).sqrt() < config.obs_r
@@ -514,177 +534,118 @@ def rollout_dubins(lz, feat, post, states, policy, T=50,
                 results["FN"] += 1
     return results
 
+
 def get_eval_plot(cache, thetas, heat_values, use_rollout_eval=True):
-    # TODO: implement option to use rollouts for TP TN FP FN.
-    fig1, axes1 = plt.subplots(2, len(thetas), figsize=(3 * len(thetas), 6)) # binary map
-    fig2, axes2 = plt.subplots(2, len(thetas), figsize=(3 * len(thetas), 6)) # continuous
-    ground_truth = np.load(config.ground_truth_path + {config.nx} + '.npz') # load ground truth: 3x4 <=> len(thetas) x len(heat_values)
-    
-    for i, theta in enumerate(thetas):
-        idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, thetas_prev, states = cache[theta]
+    theta_heat_pairs = list(product(thetas, heat_values))
+
+    fig1, axes1 = plt.subplots(2, len(theta_heat_pairs), figsize=(3 * len(theta_heat_pairs), 6))
+    fig2, axes2 = plt.subplots(2, len(theta_heat_pairs), figsize=(3 * len(theta_heat_pairs), 6))
+
+    ground_truth = np.load(f"{config.ground_truth_path}_{config.nx}.npz")
+    x = np.linspace(config.x_min, config.x_max, config.nx)
+    y = np.linspace(config.y_min, config.y_max, config.ny)
+    X, Y = np.meshgrid(x, y, indexing="ij")
+
+    for i, (theta, heat_value) in enumerate(theta_heat_pairs):
+        idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, thetas_prev, states = cache[(theta, heat_value)]
         states = torch.stack(states).float().to(config.device)
 
-        # get latent and value predictions
-        feat_heat, lz_heat, post_heat = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool=True)
-        vals_heat = evaluate_V(feat_heat)
-        combined_heat = np.minimum(vals_heat, lz_heat)
-
-        feat_no_heat, lz_no_heat, post_no_heat = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool=False)
-        vals_no_heat = evaluate_V(feat_no_heat)
-        combined_no_heat = np.minimum(vals_no_heat, lz_no_heat)
-
-        # binary plots
-        axes1[0, i].imshow(combined_heat.reshape(config.nx, config.ny).T > 0, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
-        axes1[1, i].imshow(combined_no_heat.reshape(config.nx, config.ny).T > 0, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
-
-        # continuous plots
-        axes2[0, i].imshow(combined_heat.reshape(config.nx, config.ny).T, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
-        axes2[1, i].imshow(combined_no_heat.reshape(config.nx, config.ny).T, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
-
-        # overlay true unsafe region (red circle)
-        for ax in [axes1[0, i], axes1[1, i], axes2[0, i], axes2[1, i]]:
-            circle = patches.Circle(
-                (config.obs_x, config.obs_y),
-                config.obs_r,
-                linewidth=1.5,
-                edgecolor='red',
-                facecolor='none',
-                linestyle='--'
-            )
-            ax.add_patch(circle)
-            ax.axis("off")
+        pred_data = {}
+        for heat_bool, label in [(True, 'heat'), (False, 'no_heat')]:
+            feat, lz, post = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
             
-            gt_key = f"theta_{theta:.4f}_rad"
-            if gt_key in ground_truth:
+            # feat1, lz1, post1 = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
+            # feat2, lz2, post2 = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
+
+            # # Compare:
+            # def check_diff(a, b, name):
+            #     if isinstance(a, torch.Tensor):
+            #         if not torch.allclose(a, b, rtol=1e-5, atol=1e-7):
+            #             print(f"[WARNING] get_latent is non-deterministic in {name}")
+            #     elif isinstance(a, dict):
+            #         for k in a:
+            #             check_diff(a[k], b[k], f"{name}.{k}")
+
+            # check_diff(feat1, feat2, "feat")
+            # check_diff(lz1, lz2, "lz")
+            # check_diff(post1, post2, "post")
+
+            vals = evaluate_V(feat)
+            combined = np.minimum(vals, lz)
+            pred_data[label] = {'feat': feat, 'lz': lz, 'post': post, 'combined': combined}
+
+        for row, key in enumerate(['heat', 'no_heat']):
+            binary = pred_data[key]['combined'].reshape(config.nx, config.ny).T > 0
+            continuous = pred_data[key]['combined'].reshape(config.nx, config.ny).T
+
+            axes1[row, i].imshow(binary, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
+            axes2[row, i].imshow(continuous, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
+
+            # Plot GT only on 'heat' row
+            if row == 0:
+                gt_key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
+                if gt_key in ground_truth:
+                    gt_slice = ground_truth[gt_key]
+                    axes1[row, i].contour(X, Y, gt_slice, levels=[0], colors='black', linewidths=1.5)
+                    axes2[row, i].contour(X, Y, gt_slice, levels=[0], colors='black', linewidths=1.5)
+
+            # TP/TN/FP/FN only on continuous plot
+            if row == 0 and gt_key in ground_truth:
                 gt_slice = ground_truth[gt_key]
-                
-                # Physical coordinate grid for contours
-                x = np.linspace(config.x_min, config.x_max, config.nx)
-                y = np.linspace(config.y_min, config.y_max, config.ny)
-                X, Y = np.meshgrid(x, y, indexing="ij")
-
-                # Plot contour on all subplots
-                for ax in [axes1[0, i], axes1[1, i], axes2[0, i], axes2[1, i]]:
-                    ax.contour(
-                        X, Y, gt_slice,
-                        levels=[0],
-                        colors='black',
-                        linewidths=1.5,
-                        linestyles='-'
-                    )
-
-                # heat confusion matrix
-                pred_heat = combined_heat.reshape(config.nx, config.ny).T
-                gt_slice = gt_slice
-
-                # Flatten arrays for indexed comparison
-                pred_flat = pred_heat.flatten()
+                pred = pred_data[key]['combined'].reshape(config.nx, config.ny).T
                 gt_flat = gt_slice.flatten()
-                
+                pred_flat = pred.flatten()
+
                 if use_rollout_eval:
-                    confusion_matrix = rollout_dubins(lz_heat, feat_heat, post_heat, states, policy, heat=True) # ------------------------------------
-                    TP = confusion_matrix['TP']
-                    TN = confusion_matrix['TN']
-                    FP = confusion_matrix['FP']
-                    FN = confusion_matrix['FN']
-                    T = TP + FN + FP + TN
-                    
-                    text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
-                    axes2[0, i].text(
-                        0.02, 0.02, text,
-                        transform=axes2[0, i].transAxes,
-                        fontsize=8,
-                        color='black',
-                        verticalalignment='bottom',
-                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
+                    conf = rollout_dubins(
+                        pred_data[key]['lz'], pred_data[key]['feat'],
+                        pred_data[key]['post'], states, policy,
+                        heat=(key == 'heat')
                     )
-                    
-                    # no-heat confusion matrix
-                    pred_no_heat = combined_no_heat.reshape(config.nx, config.ny)
-                    pred_reach_no_heat = pred_no_heat > 0
-                    gt_reach = gt_slice == gt_slice
-
-                    confusion_matrix = rollout_dubins(lz_no_heat, feat_no_heat, post_no_heat, states, policy, heat=False)
-                    TP = confusion_matrix['TP']
-                    TN = confusion_matrix['TN']
-                    FP = confusion_matrix['FP']
-                    FN = confusion_matrix['FN']
-                    T = TP + FN + FP + TN
-
-                    text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
-                    axes2[1, i].text(
-                        0.02, 0.02, text,
-                        transform=axes2[1, i].transAxes,
-                        fontsize=8,
-                        color='black',
-                        verticalalignment='bottom',
-                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
-                    )
+                    TP, TN, FP, FN = conf['TP'], conf['TN'], conf['FP'], conf['FN']
                 else:
-                    # Safe and unsafe indices from ground truth
-                    safe_idxs = np.where(gt_flat >= 0)[0]
-                    unsafe_idxs = np.where(gt_flat < 0)[0]
+                    safe = np.where(gt_flat >= 0)[0]
+                    unsafe = np.where(gt_flat < 0)[0]
+                    TP = (pred_flat[safe] > 0).sum()
+                    FN = (pred_flat[safe] <= 0).sum()
+                    FP = (pred_flat[unsafe] > 0).sum()
+                    TN = (pred_flat[unsafe] <= 0).sum()
 
-                    # Classification metric indices
-                    tp = np.where(pred_flat[safe_idxs] > 0)[0]
-                    fn = np.where(pred_flat[safe_idxs] <= 0)[0]
-                    fp = np.where(pred_flat[unsafe_idxs] > 0)[0]
-                    tn = np.where(pred_flat[unsafe_idxs] <= 0)[0]
-
-                    # Counts (optional)
-                    TP = len(tp)
-                    FN = len(fn)
-                    FP = len(fp)
-                    TN = len(tn)
-                    T = TP + FN + FP + TN
-                
-                    # print(TP, TN, FP, FN)
-                    text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
-                    axes2[0, i].text(
-                        0.02, 0.02, text,
-                        transform=axes2[0, i].transAxes,
-                        fontsize=8,
-                        color='black',
-                        verticalalignment='bottom',
-                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
-                    )
-
-                    # no-heat confusion matrix
-                    pred_no_heat = combined_no_heat.reshape(config.nx, config.ny)
-                    pred_reach_no_heat = pred_no_heat > 0
-                    gt_reach = gt_slice == gt_slice
-
-                    TP = np.logical_and(pred_reach_no_heat, gt_reach).sum()
-                    TN = np.logical_and(~pred_reach_no_heat, ~gt_reach).sum()
-                    FP = np.logical_and(pred_reach_no_heat, ~gt_reach).sum()
-                    FN = np.logical_and(~pred_reach_no_heat, gt_reach).sum()
-
-                    text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
-                    axes2[1, i].text(
-                        0.02, 0.02, text,
-                        transform=axes2[1, i].transAxes,
-                        fontsize=8,
-                        color='black',
-                        verticalalignment='bottom',
-                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
-                    )
-
-            # Add contour at level 0 to show boundary of the set
-            x = np.linspace(config.x_min, config.x_max, config.nx)
-            y = np.linspace(config.y_min, config.y_max, config.ny)
-            X, Y = np.meshgrid(x, y, indexing="ij")
-
-            for ax in [axes1[0, i], axes1[1, i], axes2[0, i], axes2[1, i]]:
-                ax.contour(
-                    X, Y, gt_slice,  # use physical coordinates
-                    levels=[0],
-                    colors='black',
-                    linewidths=1.5,
-                    linestyles='-'
+                T = TP + TN + FP + FN
+                text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
+                axes2[row, i].text(
+                    0.02, 0.02, text,
+                    transform=axes2[row, i].transAxes,
+                    fontsize=8,
+                    color='black',
+                    verticalalignment='bottom',
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
                 )
 
-        axes1[0, i].set_title(f"Theta {theta:.2f} (HEAT)")
-        axes1[1, i].set_title(f"Theta {theta:.2f} (NO HEAT)")
+        # Draw obstacle on both rows
+        for ax in [axes1[:, i], axes2[:, i]]:
+            for a in ax:
+                a.add_patch(patches.Circle(
+                    (config.obs_x, config.obs_y),
+                    config.obs_r,
+                    linewidth=1.5,
+                    edgecolor='red',
+                    facecolor='none',
+                    linestyle='--'
+                ))
+                a.axis("off")
+
+        # Title per subplot
+        axes2[0, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (HEAT)")
+        axes2[1, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (NO HEAT)")
+        axes1[0, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (HEAT)")
+        axes1[1, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (NO HEAT)")
+
+    # Add row labels
+    axes1[0, 0].set_ylabel("Binary (HEAT)")
+    axes1[1, 0].set_ylabel("Binary (NO HEAT)")
+    axes2[0, 0].set_ylabel("Continuous (HEAT)")
+    axes2[1, 0].set_ylabel("Continuous (NO HEAT)")
 
     fig1.suptitle("Binary Reach-Avoid: min(V, g) > 0", fontsize=14)
     fig2.suptitle("Continuous min(V, g)", fontsize=14)
@@ -693,13 +654,23 @@ def get_eval_plot(cache, thetas, heat_values, use_rollout_eval=True):
 
     return fig1, fig2
 
+# -------------------------------------------------------------------------------------------
+
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
     # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
-thetas = [3*np.pi/2, 7*np.pi/4, 0] # TODO: stick this and heat in config
-heat_values = [0.6, 0.7, 0.8, 0.9]
-cache = make_cache(config, thetas)
+
+heat_values = [0.2, 0.4, 0.6, 0.8] # TODO: stick this in config
+thetas = [3 * np.pi / 2, 7 * np.pi / 4, 0]
+
+cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+
+if not os.path.exists(cache_path):
+    cache = make_cache(config, thetas, heat_values)
+else:
+    cache = load_cache(config)
+
 logger = None
 warmup = 1
 plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
@@ -720,7 +691,7 @@ if eval:
 
     # Generate and show evaluation plots
     print("[EVAL] Generating evaluation plots...")
-    plot1, plot2 = get_eval_plot(cache, thetas)
+    plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
 
     # Save plots locally
     plot_dir = os.path.join(log_path, f"epoch_id_{epoch}", "eval_plots")
@@ -787,7 +758,7 @@ else:
         )
         
         save_best_fn(policy, epoch=epoch)
-        plot1, plot2 = get_eval_plot(cache, thetas)
+        plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
         wandb.log({"binary_reach_avoid_plot": wandb.Image(plot1), "continuous_plot": wandb.Image(plot2)})
 
         policy.critic_scheduler.step()

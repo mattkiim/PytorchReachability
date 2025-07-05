@@ -71,7 +71,7 @@ class Dreamer(nn.Module):
         self._make_pretrain_opt()
         
         if self._config.fill_cache:
-            cache_path = self._config.cache_path
+            cache_path = f"{self._config.cache_path}_{self._config.alpha_in}.pkl"
             self.load_cache() if os.path.exists(cache_path) else self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
@@ -209,7 +209,7 @@ class Dreamer(nn.Module):
                 logged = True
 
             if video_pred_log and self._should_log_video(self._step):
-                print(f"[Dreamer/_maybe_log_metrics]: step: {self._step}")
+                # print(f"[Dreamer/_maybe_log_metrics]: step: {self._step}")
                 video_pred, video_pred2 = self._wm.video_pred(next(self._dataset))
                 self._logger.video("train_openl_agent", to_np(video_pred))
                 self._logger.video("train_openl_hand", to_np(video_pred2))
@@ -346,8 +346,8 @@ class Dreamer(nn.Module):
         return obs_loss.item()
     
     def load_cache(self):
-        cache_path = self._config.cache_path
-        cache_path = os.path.dirname(cache_path + self._config.alpha_in + ".pkl")
+        cache_path = self._config.wm_cache_path
+        cache_path = f"{cache_path}_{self._config.alpha_in}.pkl"
 
         if not os.path.exists(cache_path):
             print(f"No cache file found at {cache_path}")
@@ -370,7 +370,7 @@ class Dreamer(nn.Module):
         
     def fill_cache(self):
         print('filling cache')
-        cache_path = self._config.cache_path
+        cache_path = self._config.wm_cache_path
         nx, ny, nz = self._config.nx, self._config.ny, 3
         self.nz = nz
         self.v = np.zeros((nx, ny, nz))
@@ -399,9 +399,10 @@ class Dreamer(nn.Module):
                 labels.append(0) # safe
             x = x - np.cos(theta)*1*0.05
             y = y - np.sin(theta)*1*0.05
-            #imgs.append(self.capture_image(np.array([x, y, theta])))
-            gen = HeatFrameGenerator(self._config)
             img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
+            gen = HeatFrameGenerator(self._config)
+            gen._compute_geometry(img.shape)
+            
             if self._config.heat_mode == 0:
                 heat_img = gen.get_heat_frame_v0(img, heat=True)
                 no_heat_img = gen.get_heat_frame_v0(img, heat=False)
@@ -410,12 +411,13 @@ class Dreamer(nn.Module):
                 no_heat_img = gen.get_heat_frame_v1(img, heat=False)
             elif self._config.heat_mode == 2:
                 img = gen.get_rgb_v2(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
-                heat_img = gen.get_heat_frame_v2(img, heat=True)
-                no_heat_img = gen.get_heat_frame_v2(img, heat=False)
+                heat_img, _ = gen.get_heat_frame_v2(img, heat=True)
+                no_heat_img, _ = gen.get_heat_frame_v2(img, heat=False)
             elif self._config.heat_mode == 3:
                 img = gen.get_rgb_v3(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
-                heat_img = gen.get_heat_frame_v3(img, heat=True)
-                no_heat_img = gen.get_heat_frame_v3(img, heat=False)
+                heat_img, _ = gen.get_heat_frame_v3(img, heat=True)
+                no_heat_img, _ = gen.get_heat_frame_v3(img, heat=False)
+                # print(heat_img.shape, no_heat_img.shape)
             else:
                 raise ValueError("Invalid heat_mode")
             
@@ -435,8 +437,10 @@ class Dreamer(nn.Module):
         print('done!')
         
         if cache_path is None:
-            cache_path = "cache/cache_data.pkl"
-        os.makedirs(os.path.dirname(cache_path + self._config.alpha_in + ".pkl"), exist_ok=True)
+            raise NameError("No cache_path")
+
+        cache_path = f"{cache_path}_{self._config.alpha_in}.pkl"
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         
         with open(cache_path, "wb") as f:
             pickle.dump({
@@ -617,6 +621,8 @@ def main(config):
         np.float32(midpoint - interval/2),
         np.float32(midpoint + interval/2),
     )
+    # print(f"[dreamer_offline/main]: {gt_observation_space}"); quit()
+    
     image_size = config.size[0] # 128
     
     if config.multimodal:
@@ -820,7 +826,7 @@ def main(config):
 
                 logger.image("pretrain/lx_plot", np.transpose(lx_plot, (2, 0, 1)))
                 
-                print(step)
+                # print(step)
                 best_pretrain_success = tools.save_checkpoint(
                     ckpt_name, step, success, best_pretrain_success, agent, logdir
                 )

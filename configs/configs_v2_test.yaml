@@ -17,14 +17,13 @@ defaults:
   num_trajs: 10 ## 4000 in paper
   num_train_trajs: 9 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/wm_demos128_multimodal_v3plus_test' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/cache_v3plus_test'
-  hj_cache_path: 'cache/hj/cache_v3plus_test'
+  dataset_path: 'train_data/wm_demos128_multimodal_v2plus_test' # '128' should be the same as the size above
+  cache_path: 'cache/cache_v2plus_test'
   ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/dreamer_dubins_multimodal_v3plus_test'
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v3plus/rssm_ckpt.pt 
+  logdir: 'logs/dreamer_dubins_multimodal_v2plus_test'
+  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v2plus/rssm_ckpt.pt 
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -167,7 +166,7 @@ defaults:
 
   multimodal: True
   aug_rssm: True
-  heat_mode: 3
+  heat_mode: 2
   heat_prop: 0.5
   heat_threshold: 0.8
   fill_cache: True

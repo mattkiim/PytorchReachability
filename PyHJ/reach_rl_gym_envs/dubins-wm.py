@@ -9,6 +9,7 @@ from PIL import Image
 import matplotlib.patches as patches
 import torch
 import math
+
 class Dubins_WM_Env(gym.Env):
     # TODO: 1. baseline over approximation; 2. our critic loss drop faster 
     def __init__(self, params):
@@ -20,7 +21,6 @@ class Dubins_WM_Env(gym.Env):
             past_data = params[1]
             config = params[2]
             self.set_wm(wm, past_data, config)
-
 
         self.render_mode = None
         self.time_step = 0.05
@@ -53,7 +53,6 @@ class Dubins_WM_Env(gym.Env):
         self.image_size=config.size[0]
         self.turnRate = config.turnRate
 
-
     def set_wm(self, wm, past_data, config):
         self.device = config.device
         self.encoder = wm.encoder.to(self.device)
@@ -82,11 +81,14 @@ class Dubins_WM_Env(gym.Env):
     
     def reset(self, initial_state=None,seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
-       
+
+        # print("[dubins-wm/reset]")
         
         init_traj = next(self.data)
         data = self.wm.preprocess(init_traj)
         embed = self.encoder(data)
+        
+        # print(f"[PyHJ/reach_rl_gym_envs/dubins-wm/reset] action shape: {data["action"].shape}")
         self.latent, _ = self.wm.dynamics.observe(
             embed, data["action"], data["is_first"]
         )
@@ -109,55 +111,3 @@ class Dubins_WM_Env(gym.Env):
         safety_margin = np.array(g_xList).squeeze()
 
         return safety_margin, cont.mean.squeeze().detach().cpu().numpy()
-    
-    def reset2(self, initial_state=None, seed: Optional[int] = None, options: Optional[dict] = None):
-        super().reset(seed=seed)
-
-        if hasattr(self, '_manual_init_state'):
-            s = self._manual_init_state
-            del self._manual_init_state
-
-            # Manually set up a fake initial latent state from (x, y, theta)
-            x, y, theta = s
-            cos_theta = np.cos(theta)
-            sin_theta = np.sin(theta)
-            obs_state = np.array([[cos_theta, sin_theta]])
-
-            dummy_img = np.zeros((1, 128, 128, 3), dtype=np.uint8)
-            dummy_heat = np.zeros((1, 128, 128, 1), dtype=np.uint8)
-            dummy_action = np.zeros((1, 1))
-            dummy_first = np.array([[1]])
-            dummy_terminal = np.array([[0]])
-
-            data = {
-                'obs_state': obs_state,
-                'image': dummy_img,
-                'heat': dummy_heat,
-                'action': dummy_action,
-                'is_first': dummy_first,
-                'is_terminal': dummy_terminal
-            }
-
-            data = self.wm.preprocess(data)
-            embed = self.encoder(data)
-            self.latent, _ = self.wm.dynamics.observe(embed, data["action"], data["is_first"])
-
-            for k, v in self.latent.items(): 
-                self.latent[k] = v[:, [-1]]
-            self.feat = self.wm.dynamics.get_feat(self.latent).detach().cpu().numpy()
-            return np.copy(self.feat), {"is_first": True, "is_terminal": False}
-
-        else:
-            init_traj = next(self.data)
-            data = self.wm.preprocess(init_traj)
-            embed = self.encoder(data)
-            self.latent, _ = self.wm.dynamics.observe(embed, data["action"], data["is_first"])
-
-            for k, v in self.latent.items(): 
-                self.latent[k] = v[:, [-1]]
-            self.feat = self.wm.dynamics.get_feat(self.latent).detach().cpu().numpy()
-            return np.copy(self.feat), {"is_first": True, "is_terminal": False}
-        
-    def set_initial_state(self, state):
-        """Specify (x, y, theta) as the initial condition before reset()."""
-        self._manual_init_state = np.array(state)

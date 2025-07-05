@@ -130,6 +130,8 @@ class RSSM(nn.Module):
         # (batch, time, ch) -> (time, batch, ch)
         embed, action, is_first = swap(embed), swap(action), swap(is_first)
         # prev_state[0] means selecting posterior of return(posterior, prior) from obs_step
+        
+        # print(f"[dreamerv3-torch/networks/observe]: action shape: {action.shape}")
         post, prior = tools.static_scan(
             lambda prev_state, prev_act, embed, is_first: self.obs_step(
                 prev_state[0], prev_act, embed, is_first
@@ -173,6 +175,7 @@ class RSSM(nn.Module):
         return dist
 
     def obs_step(self, prev_state, prev_action, embed, is_first, sample=True):
+        # print(f"[dreamerv3-torch/networks/obs_step] action shape: {prev_action.shape}")
         # initialize all prev_state
         if prev_state == None or torch.sum(is_first) == len(is_first):
             prev_state = self.initial(len(is_first))
@@ -192,7 +195,9 @@ class RSSM(nn.Module):
                 prev_state[key] = (
                     val * (1.0 - is_first_r) + init_state[key] * is_first_r
                 )
+            # print(prev_state, prev_action)
 
+        # print(f"[dreamerv3-torch/networks/obs_step] action shape: {prev_action.shape}")
         prior = self.img_step(prev_state, prev_action)
         x = torch.cat([prior["deter"], embed], -1)
         # (batch_size, prior_deter + embed) -> (batch_size, hidden)
@@ -214,6 +219,7 @@ class RSSM(nn.Module):
             # (batch, stoch, discrete_num) -> (batch, stoch * discrete_num)
             prev_stoch = prev_stoch.reshape(shape)
         # (batch, stoch * discrete_num) -> (batch, stoch * discrete_num + action)
+        # print(f"[dreamerv3-torch/networks/img_step] prev shapes: {prev_stoch.shape} {prev_action.shape}")
         x = torch.cat([prev_stoch, prev_action], -1)
         # (batch, stoch * discrete_num + action, embed) -> (batch, hidden)
         x = self._img_in_layers(x)
@@ -324,6 +330,7 @@ class MultiEncoder(nn.Module):
             for k, v in shapes.items()
             if len(v) in (1, 2) and re.match(mlp_keys, k)
         }
+        # print(shapes); quit()
         if multimodal and aug_rssm:
             self.heat_cnn_shapes = {
                 k: v for k, v in shapes.items() if len(v) == 3 and re.match(heat_keys, k)

@@ -18,7 +18,8 @@ defaults:
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
   dataset_path: 'train_data/wm_demos128_multimodal_v3plus' # '128' should be the same as the size above
-  cache_path: 'cache/cache_v3plus'
+  wm_cache_path: 'cache/wm/cache_v3plus'
+  hj_cache_path: 'cache/hj/cache_v3plus'
   ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
