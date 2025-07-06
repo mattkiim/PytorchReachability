@@ -18,8 +18,12 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
-DEFAULT_VEHICLE_TEMP = 255 / 4
-DEFAULT_RGB_TEMP = 255
+DEFAULT_VEHICLE_TEMP = 255 / 1.1
+MIN_VEHICLE_TEMP = 0. # TODO: implement this
+
+DEFAULT_RGB_VEHICLE_TEMP = 255
+MIN_RGB_VEHICLE_TEMP = 255/2
+DEFAULT_OBSTACLE_TEMP = 255 / 2 + 0.001
 
 class HeatFrameGenerator:
     def __init__(self, config):
@@ -30,7 +34,7 @@ class HeatFrameGenerator:
         self.cy = None
         self.radius = None
         self.vehicle_temp = DEFAULT_VEHICLE_TEMP
-        self.vehicle_temp_rgb = DEFAULT_RGB_TEMP
+        self.vehicle_temp_rgb = DEFAULT_RGB_VEHICLE_TEMP
         self.vehicle_has_entered = False
 
     def _compute_geometry(self, img_shape):
@@ -53,7 +57,7 @@ class HeatFrameGenerator:
     
     def reset_vehicle_heat(self):
       self.vehicle_temp = DEFAULT_VEHICLE_TEMP
-      self.vehicle_temp_rgb = DEFAULT_RGB_TEMP
+      self.vehicle_temp_rgb = DEFAULT_RGB_VEHICLE_TEMP
       self.vehicle_has_entered = False
     
     def show_heat_image(self, img_heat_array, save_path="test.png"):
@@ -86,7 +90,7 @@ class HeatFrameGenerator:
         
         if heat:
             heat_frame = obstacle
-            heat_frame[obstacle_mask] = 255 / 2
+            heat_frame[obstacle_mask] = DEFAULT_OBSTACLE_TEMP
 
             vehicle_mask = (vehicle == 0)
             heat_frame[vehicle_mask & obstacle_mask] = 0
@@ -111,8 +115,6 @@ class HeatFrameGenerator:
         return self.get_heat_frame_v3(img_array, heat, alpha_in=alpha_in, alpha_out=alpha_out)
 
     def get_heat_frame_v3(self, img_array, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
-      # TODO: if heat value is specified, then set the vehicle to a specific color
-      # TODO: implement 
       '''
       full observability
       
@@ -129,9 +131,12 @@ class HeatFrameGenerator:
       
       if heat:
           heat_frame = obstacle.copy()
-          heat_frame[obstacle_mask] = 255 / 2
+          heat_frame[obstacle_mask] = DEFAULT_OBSTACLE_TEMP
 
-          vehicle_mask = (vehicle <= DEFAULT_VEHICLE_TEMP)
+          vehicle_mask = (
+            (vehicle <= DEFAULT_VEHICLE_TEMP) & 
+            (vehicle != DEFAULT_OBSTACLE_TEMP)
+                          )
           inside_mask = vehicle_mask & obstacle_mask
           outside_mask = vehicle_mask & ~obstacle_mask
 
@@ -143,8 +148,8 @@ class HeatFrameGenerator:
             # Update temperature
             if np.any(outside_mask) and not np.any(inside_mask):
                 # All vehicle pixels are outside
-                # self.vehicle_temp = min(DEFAULT_VEHICLE_TEMP, self.vehicle_temp + alpha_out)
-                pass
+                self.vehicle_temp = min(DEFAULT_VEHICLE_TEMP, self.vehicle_temp + alpha_out)
+                # pass
             elif np.any(inside_mask):
                 # Some or all vehicle pixels are inside
                 self.vehicle_temp = max(0, self.vehicle_temp - alpha_in)
@@ -154,7 +159,6 @@ class HeatFrameGenerator:
             heat_frame[inside_mask] = temp
             heat_frame[outside_mask] = temp
           
-            
       else:
           heat_frame = np.ones_like(vehicle) * 255
           vehicle_mask = (vehicle == 0)
@@ -228,17 +232,26 @@ class HeatFrameGenerator:
 
         if heat:
           if heat_value is None:
-            rgb_out[..., 2:3][inside_mask] = self.vehicle_temp_rgb
-            rgb_out[..., 2:3][outside_mask] = self.vehicle_temp_rgb
+            # rgb_out[..., 2:3][inside_mask] = self.vehicle_temp_rgb
+            # rgb_out[..., 2:3][outside_mask] = self.vehicle_temp_rgb
             
+            temp = self.vehicle_temp_rgb
+            temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+            decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+                    
             if not np.any(inside_mask):
-              self.vehicle_temp_rgb = min(255, self.vehicle_temp_rgb + alpha_out)
+              self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + alpha_out * 1.2)
               # pass
             else:
-                self.vehicle_temp_rgb = max(255/2, self.vehicle_temp_rgb - alpha_in)
+                self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - alpha_in * 1.2)
             
           else:
-            temp = self.heat_to_temp(heat_value, DEFAULT_RGB_TEMP)
+            temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
             rgb_out[..., 2:3][inside_mask] = temp
             rgb_out[..., 2:3][outside_mask] = temp
 

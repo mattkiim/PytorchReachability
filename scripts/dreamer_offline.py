@@ -71,7 +71,7 @@ class Dreamer(nn.Module):
         self._make_pretrain_opt()
         
         if self._config.fill_cache:
-            cache_path = f"{self._config.cache_path}_{self._config.alpha_in}.pkl"
+            cache_path = f"{self._config.hj_cache_path}_{self._config.alpha_in}.pkl"
             self.load_cache() if os.path.exists(cache_path) else self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
