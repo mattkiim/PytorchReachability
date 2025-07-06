@@ -225,7 +225,7 @@ actor = Actor(
     actor_net, args.action_shape, max_action=args.max_action, device=args.device
 ).to(args.device)
 actor_optim = torch.optim.AdamW(actor.parameters(), lr=args.actor_lr)
-actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=actor_optim, gamma=1.0)
+actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=actor_optim, gamma=0.995)
 
 
 policy = DDPGPolicy(

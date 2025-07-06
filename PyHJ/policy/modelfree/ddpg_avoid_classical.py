@@ -183,6 +183,8 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
         """Update critic network and actor network"""
         # critic
         td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
+        # if self.critic_scheduler is not None:
+            # self.critic_scheduler.step()
         batch.weight = td  # prio-buffer
         # actor
         

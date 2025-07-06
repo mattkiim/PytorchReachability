@@ -14,8 +14,8 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 10 ## 4000 in paper
-  num_train_trajs: 9 ## 3800 in paper
+  num_trajs: 6 ## 4000 in paper
+  num_train_trajs: 5 ## 3800 in paper
   size: [128, 128]
   dataset_path: 'train_data/wm_demos128_multimodal_v3plus_test' # '128' should be the same as the size above
   wm_cache_path: 'cache/wm/cache_v3plus_test'
@@ -174,6 +174,6 @@ defaults:
   use_wandb: False
 
   # for training data
-  alpha_in: 3
-  alpha_out: 5
+  alpha_in: 12
+  alpha_out: 20
   test: True
