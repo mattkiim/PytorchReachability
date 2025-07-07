@@ -127,12 +127,17 @@ if config.multimodal:
         shape=(128, 128, 3), # TODO: softcode input
         dtype=np.uint8
     )
+    env.observation_space_full['obs_state'] = gymnasium.spaces.Box(
+        low=-1, high=1, shape=(3,), dtype=np.float32
+    )
+    
     env.observation_space_full['heat'] = gymnasium.spaces.Box(
         low=0,
         high=255,
         shape=(128, 128, 1), # TODO: softcode input
         dtype=np.uint8
     )
+    
 
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
 # print(env.observation_space_full['image']); quit()
@@ -366,18 +371,23 @@ def make_cache(config, thetas, heat_values):
                 # TODO: when i make the images, i need to get them at specific heat_values. theta is observable, but we are not doing that
                 if config.heat_mode == 0:
                     heat = gen.get_heat_frame_v0(img, heat=True)
-                    no_heat = gen.get_heat_frame_v0(img, heat=False)
+                    
+                    if config.include_no_heat:
+                        no_heat = gen.get_heat_frame_v0(img, heat=False)
                 elif config.heat_mode == 1:
                     heat = gen.get_heat_frame_v1(img, heat=True)
-                    no_heat = gen.get_heat_frame_v1(img, heat=False)
+                    if config.include_no_heat:
+                        no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif config.heat_mode == 2:
                     img = gen.get_rgb_v2(img, config, heat=True)
                     heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=heat_value)
-                    no_heat, _ = gen.get_heat_frame_v2(img, heat=False, heat_value=heat_value)
+                    if config.include_no_heat:
+                        no_heat, _ = gen.get_heat_frame_v2(img, heat=False, heat_value=heat_value)
                 elif config.heat_mode == 3:
                     img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
                     heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=heat_value)
-                    no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value)
+                    if config.include_no_heat:
+                        no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value)
                 else:
                     raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
 
@@ -385,7 +395,8 @@ def make_cache(config, thetas, heat_values):
                 idxs.append(idx)
                 imgs_prev.append(img)
                 heat_imgs.append(heat)
-                no_heat_imgs.append(no_heat)
+                if config.include_no_heat:
+                    no_heat_imgs.append(no_heat)
                 thetas_prev.append(theta_prev)
                 heat_values_prev.append(heat_value)
                 states.append(prev_state)
@@ -427,7 +438,7 @@ def load_cache(config):
 
     return cache
     
-def get_latent(wm, thetas, imgs, heat_imgs, no_heat_imgs, heat_bool=True): 
+def get_latent(wm, thetas, heat_values, imgs, heat_imgs, no_heat_imgs, heat_bool=True):
     # TODO 1: turn 'imgs' + 'heat' into a dictionary called 'obs'
     # TODO 2: ^ heat_on: (imgs + thermal) + heat_off: (imgs + thermal)
     thetas = np.expand_dims(np.expand_dims(thetas,1),1)
@@ -441,7 +452,10 @@ def get_latent(wm, thetas, imgs, heat_imgs, no_heat_imgs, heat_bool=True):
     lasts = np.zeros((np.shape(thetas)[0], 1))
     cos = np.cos(thetas)
     sin = np.sin(thetas)
-    states = np.concatenate([cos, sin], axis=-1)
+    heat_values = np.ones_like(cos) * heat_values # TODO: after adding to cache, fix this
+    if not heat_bool: heat_values *= 0
+    # print(heat_values.shape, thetas.shape); quit()
+    states = np.concatenate([cos, sin, heat_values], axis=-1)
     chunks = 21
     if np.shape(imgs)[0] > chunks:
       bs = int(np.shape(imgs)[0]/chunks)
@@ -473,6 +487,14 @@ def get_latent(wm, thetas, imgs, heat_imgs, no_heat_imgs, heat_bool=True):
     
     feat = wm.dynamics.get_feat(post).detach()
     lz = torch.tanh(wm.heads["margin"](feat))
+    
+    # lz_image = lz.reshape(41, 41).T
+
+    # plt.imshow(lz_image, origin="lower", cmap="seismic", vmin=-1, vmax=1)
+    # plt.colorbar(label="lz (safety margin)")
+    # plt.title("Safety Margin Output (lz)")
+    # plt.savefig("lz_margin_plot.png", dpi=300); quit() # TODO: visualize this tomorrow
+    
     return feat.squeeze().cpu().numpy(), lz.squeeze().detach().cpu().numpy(), post
 
 def evaluate_V(state):
@@ -534,98 +556,101 @@ def rollout_dubins(lz, feat, post, states, policy, T=100,
                 results["FN"] += 1
     return results
 
+def get_eval_plot(cache, thetas, heat_values, use_rollout_eval=False):
+    from itertools import product
 
-def get_eval_plot(cache, thetas, heat_values, use_rollout_eval=True):
     theta_heat_pairs = list(product(thetas, heat_values))
+    nrows = 2 if config.include_no_heat else 1
+    ncols = len(theta_heat_pairs)
+    figsize = (3 * ncols, 6)
 
-    fig1, axes1 = plt.subplots(2, len(theta_heat_pairs), figsize=(3 * len(theta_heat_pairs), 6))
-    fig2, axes2 = plt.subplots(2, len(theta_heat_pairs), figsize=(3 * len(theta_heat_pairs), 6))
+    def make_fig():
+        fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+        return fig, np.atleast_2d(ax)
+
+    # Create figures
+    fig_lz, axes_lz = make_fig()
+    fig_lz_bin, axes_lz_bin = make_fig()
+    fig_v, axes_v = make_fig()
+    fig_v_bin, axes_v_bin = make_fig()
+    fig_combined, axes_combined = make_fig()
+    fig_combined_bin, axes_combined_bin = make_fig()
 
     ground_truth = np.load(f"{config.ground_truth_path}_{config.nx}.npz")
     x = np.linspace(config.x_min, config.x_max, config.nx)
     y = np.linspace(config.y_min, config.y_max, config.ny)
     X, Y = np.meshgrid(x, y, indexing="ij")
 
+    plot_list = [(True, 'heat')]
+    if config.include_no_heat:
+        plot_list.append((False, 'no_heat'))
+
     for i, (theta, heat_value) in enumerate(theta_heat_pairs):
         idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, thetas_prev, states = cache[(theta, heat_value)]
         states = torch.stack(states).float().to(config.device)
 
-        pred_data = {}
-        for heat_bool, label in [(True, 'heat'), (False, 'no_heat')]:
-            feat, lz, post = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
-            
-            # feat1, lz1, post1 = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
-            # feat2, lz2, post2 = get_latent(wm, thetas_prev, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
-
-            # # Compare:
-            # def check_diff(a, b, name):
-            #     if isinstance(a, torch.Tensor):
-            #         if not torch.allclose(a, b, rtol=1e-5, atol=1e-7):
-            #             print(f"[WARNING] get_latent is non-deterministic in {name}")
-            #     elif isinstance(a, dict):
-            #         for k in a:
-            #             check_diff(a[k], b[k], f"{name}.{k}")
-
-            # check_diff(feat1, feat2, "feat")
-            # check_diff(lz1, lz2, "lz")
-            # check_diff(post1, post2, "post")
-
+        for row, (heat_bool, label) in enumerate(plot_list):
+            feat, lz, post = get_latent(wm, thetas_prev, heat_value, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, heat_bool)
             vals = evaluate_V(feat)
             combined = np.minimum(vals, lz)
-            pred_data[label] = {'feat': feat, 'lz': lz, 'post': post, 'combined': combined}
 
-        for row, key in enumerate(['heat', 'no_heat']):
-            binary = pred_data[key]['combined'].reshape(config.nx, config.ny).T > 0
-            continuous = pred_data[key]['combined'].reshape(config.nx, config.ny).T
+            # Reshape to 2D images
+            lz_image = lz.reshape(config.nx, config.ny).T
+            v_image = vals.reshape(config.nx, config.ny).T
+            combined_image = combined.reshape(config.nx, config.ny).T
 
-            axes1[row, i].imshow(binary, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
-            axes2[row, i].imshow(continuous, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
+            # Binary versions
+            lz_bin = (lz_image > 0).astype(float)
+            v_bin = (v_image > 0).astype(float)
+            combined_bin = (combined_image > 0).astype(float)
 
-            # Plot GT only on 'heat' row
+            # Plotting
+            axes_lz[row, i].imshow(lz_image, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1, cmap="seismic")
+            axes_lz_bin[row, i].imshow(lz_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap="gray")
+
+            axes_v[row, i].imshow(v_image, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1, cmap="viridis")
+            axes_v_bin[row, i].imshow(v_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap="gray")
+
+            axes_combined[row, i].imshow(combined_image, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1)
+            axes_combined_bin[row, i].imshow(combined_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap="gray")
+
+            # Titles
+            title = f"Theta {theta:.2f}, Heat {heat_value:.2f} ({label.upper()})"
+            for ax in [axes_lz, axes_lz_bin, axes_v, axes_v_bin, axes_combined, axes_combined_bin]:
+                ax[row, i].set_title(title)
+
+            # Ground truth overlay (only on heat row)
             if row == 0:
                 gt_key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
                 if gt_key in ground_truth:
                     gt_slice = ground_truth[gt_key]
-                    axes1[row, i].contour(X, Y, gt_slice, levels=[0], colors='black', linewidths=1.5)
-                    axes2[row, i].contour(X, Y, gt_slice, levels=[0], colors='black', linewidths=1.5)
+                    for axset in [axes_lz, axes_v, axes_combined, axes_lz_bin, axes_v_bin, axes_combined_bin]:
+                        axset[row, i].contour(X, Y, gt_slice, levels=[0], colors='black', linewidths=1.5)
 
-            # TP/TN/FP/FN only on continuous plot
-            if row == 0 and gt_key in ground_truth:
-                gt_slice = ground_truth[gt_key]
-                pred = pred_data[key]['combined'].reshape(config.nx, config.ny).T
-                gt_flat = gt_slice.flatten()
-                pred_flat = pred.flatten()
-
-                if use_rollout_eval:
-                    conf = rollout_dubins(
-                        pred_data[key]['lz'], pred_data[key]['feat'],
-                        pred_data[key]['post'], states, policy,
-                        heat=(key == 'heat')
-                    )
-                    TP, TN, FP, FN = conf['TP'], conf['TN'], conf['FP'], conf['FN']
-                else:
+                    # TP/TN/FP/FN on combined continuous
+                    gt_flat = gt_slice.flatten()
+                    pred_flat = combined_image.flatten()
                     safe = np.where(gt_flat >= 0)[0]
                     unsafe = np.where(gt_flat < 0)[0]
                     TP = (pred_flat[safe] > 0).sum()
                     FN = (pred_flat[safe] <= 0).sum()
                     FP = (pred_flat[unsafe] > 0).sum()
                     TN = (pred_flat[unsafe] <= 0).sum()
+                    T = TP + TN + FP + FN
+                    text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
+                    axes_combined[row, i].text(
+                        0.02, 0.02, text,
+                        transform=axes_combined[row, i].transAxes,
+                        fontsize=8,
+                        color='black',
+                        verticalalignment='bottom',
+                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
+                    )
 
-                T = TP + TN + FP + FN
-                text = f"TP:{TP/T:.2f}  TN:{TN/T:.2f}\nFP:{FP/T:.2f}  FN:{FN/T:.2f}"
-                axes2[row, i].text(
-                    0.02, 0.02, text,
-                    transform=axes2[row, i].transAxes,
-                    fontsize=8,
-                    color='black',
-                    verticalalignment='bottom',
-                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray')
-                )
-
-        # Draw obstacle on both rows
-        for ax in [axes1[:, i], axes2[:, i]]:
-            for a in ax:
-                a.add_patch(patches.Circle(
+            # Draw obstacle
+            for axset in [axes_lz, axes_lz_bin, axes_v, axes_v_bin, axes_combined, axes_combined_bin]:
+                ax = axset[row, i]
+                ax.add_patch(patches.Circle(
                     (config.obs_x, config.obs_y),
                     config.obs_r,
                     linewidth=1.5,
@@ -633,26 +658,38 @@ def get_eval_plot(cache, thetas, heat_values, use_rollout_eval=True):
                     facecolor='none',
                     linestyle='--'
                 ))
-                a.axis("off")
+                ax.axis("off")
 
-        # Title per subplot
-        axes2[0, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (HEAT)")
-        axes2[1, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (NO HEAT)")
-        axes1[0, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (HEAT)")
-        axes1[1, i].set_title(f"Theta {theta:.2f}, Heat {heat_value:.2f} (NO HEAT)")
+    # Add y-labels for first column
+    if ncols > 0:
+        axes_lz[0, 0].set_ylabel("l(x) (HEAT)")
+        axes_lz_bin[0, 0].set_ylabel("Binary l(x)")
+        axes_v[0, 0].set_ylabel("V(x) (HEAT)")
+        axes_v_bin[0, 0].set_ylabel("Binary V(x)")
+        axes_combined[0, 0].set_ylabel("min(V, l) (HEAT)")
+        axes_combined_bin[0, 0].set_ylabel("Binary min(V, l)")
 
-    # Add row labels
-    axes1[0, 0].set_ylabel("Binary (HEAT)")
-    axes1[1, 0].set_ylabel("Binary (NO HEAT)")
-    axes2[0, 0].set_ylabel("Continuous (HEAT)")
-    axes2[1, 0].set_ylabel("Continuous (NO HEAT)")
+        if config.include_no_heat:
+            axes_lz[1, 0].set_ylabel("l(x) (NO HEAT)")
+            axes_lz_bin[1, 0].set_ylabel("Binary l(x)")
+            axes_v[1, 0].set_ylabel("V(x) (NO HEAT)")
+            axes_v_bin[1, 0].set_ylabel("Binary V(x)")
+            axes_combined[1, 0].set_ylabel("min(V, l) (NO HEAT)")
+            axes_combined_bin[1, 0].set_ylabel("Binary min(V, l)")
 
-    fig1.suptitle("Binary Reach-Avoid: min(V, g) > 0", fontsize=14)
-    fig2.suptitle("Continuous min(V, g)", fontsize=14)
-    fig1.tight_layout()
-    fig2.tight_layout()
+    # Final layout
+    fig_lz.suptitle("Safety Margin l(x)", fontsize=14)
+    fig_lz_bin.suptitle("Binary l(x) > 0", fontsize=14)
+    fig_v.suptitle("Critic Value V(x)", fontsize=14)
+    fig_v_bin.suptitle("Binary V(x) > 0", fontsize=14)
+    fig_combined.suptitle("min(V(x), l(x))", fontsize=14)
+    fig_combined_bin.suptitle("Binary min(V(x), l(x)) > 0", fontsize=14)
 
-    return fig1, fig2
+    for fig in [fig_lz, fig_lz_bin, fig_v, fig_v_bin, fig_combined, fig_combined_bin]:
+        fig.tight_layout()
+
+    return fig_lz, fig_lz_bin, fig_v, fig_v_bin, fig_combined, fig_combined_bin
+
 
 # -------------------------------------------------------------------------------------------
 
@@ -661,8 +698,9 @@ if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
-heat_values = [0.2, 0.4, 0.6, 0.8] # TODO: stick this in config
-thetas = [3 * np.pi / 2, 7 * np.pi / 4, 0]
+heat_values = [0.2, 0.4, 0.6, 0.8] # TODO: stick this in config, and generate ground truths in this script
+# thetas = [3 * np.pi / 2, 7 * np.pi / 4, 0]
+thetas = [3 * np.pi / 2, 0]
 
 cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
 
@@ -673,7 +711,7 @@ else:
 
 logger = None
 warmup = 1
-plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
+plot1, plot2, plot3 = get_eval_plot(cache, thetas, heat_values)
 
 eval = False
 if eval:
@@ -701,15 +739,6 @@ if eval:
     plot1.savefig(plot1_path)
     plot2.savefig(plot2_path)
     print(f"[EVAL] Plots saved to {plot_dir}")
-
-    # Log to wandb
-    if args.use_wandb:
-        wandb.log({
-            "eval/binary_reach_avoid_plot": wandb.Image(plot1),
-            "eval/continuous_plot": wandb.Image(plot2),
-            "eval/avg_reward": avg_reward,
-            "eval/avg_length": avg_length
-        })
 
     print("[EVAL] Evaluation complete.")
 
@@ -758,8 +787,17 @@ else:
         )
         
         save_best_fn(policy, epoch=epoch)
-        plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
-        wandb.log({"binary_reach_avoid_plot": wandb.Image(plot1), "continuous_plot": wandb.Image(plot2)})
+        plot1, plot2, plot3, plot4, plot5, plot6 = get_eval_plot(cache, thetas, heat_values)
+        plot1, plot2, plot3, plot4, plot5, plot6 = get_eval_plot(cache, thetas, heat_values)
+        wandb.log({
+            "eval/lz_continuous": wandb.Image(plot1),
+            "eval/lz_binary": wandb.Image(plot2),
+            "eval/v_continuous": wandb.Image(plot3),
+            "eval/v_binary": wandb.Image(plot4),
+            "eval/min_v_l_continuous": wandb.Image(plot5),
+            "eval/min_v_l_binary": wandb.Image(plot6)
+        })
+
 
         policy.critic_scheduler.step()
         policy.actor_scheduler.step()

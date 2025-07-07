@@ -200,8 +200,13 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     
     with open(dataset_path, 'rb') as f:
         demos = pickle.load(f)
-        
+    
     num_train = config.num_train_trajs
+        
+    if not config.include_no_heat:
+        # take the last half of demos
+        demos = demos[len(demos) // 2:]
+        num_train = config.num_train_trajs // 2    
     
     
     pixel_keys = sorted(['image', 'heat'])
@@ -224,7 +229,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
         for t in range(len(traj["obs"][pixel_keys[0]])):
             transition = defaultdict(np.array)
             for obs_key in pixel_keys:
-                # print(obs_key, traj["obs"][obs_key][t])
                 transition[obs_key] = traj["obs"][obs_key][t]
                 
                 # FIXME: temp below
@@ -238,7 +242,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 transition["state"] = curr_obs_state_vec
             
             transition["privileged_state"] = traj['obs']['priv_state'][t]
-            transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t])]
+            transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
             transition["reward"] = np.array(
                 0, dtype=np.float32
             )

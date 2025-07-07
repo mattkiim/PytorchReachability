@@ -218,10 +218,10 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
         else:
             warnings.warn("Cannot add exploration noise to non-numpy_array action.")
 
-        if self.new_expl:
-            rand_act = np.random.uniform(-1, 1, act.shape)
-            values = self.critic(batch.obs, rand_act).cpu().detach().numpy()
-            act = np.where(values < 0.0, act, rand_act)
+        # if self.new_expl:
+        #     rand_act = np.random.uniform(-1, 1, act.shape)
+        #     values = self.critic(batch.obs, rand_act).cpu().detach().numpy()
+        #     act = np.where(values < 0.0, act, rand_act)
 
         if self.warmup:
             act = np.random.uniform(-1, 1, act.shape)

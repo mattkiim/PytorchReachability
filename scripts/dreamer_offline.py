@@ -71,8 +71,12 @@ class Dreamer(nn.Module):
         self._make_pretrain_opt()
         
         if self._config.fill_cache:
-            cache_path = f"{self._config.hj_cache_path}_{self._config.alpha_in}.pkl"
-            self.load_cache() if os.path.exists(cache_path) else self.fill_cache()
+            cache_path = f"{self._config.wm_cache_path}_{self._config.alpha_in}.pkl"
+            if os.path.exists(cache_path):
+                self.load_cache() 
+            else:
+                print(f"No cache file found at {cache_path}; filling cache...")
+                self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
@@ -412,18 +416,21 @@ class Dreamer(nn.Module):
             elif self._config.heat_mode == 2:
                 img = gen.get_rgb_v2(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
                 heat_img, _ = gen.get_heat_frame_v2(img, heat=True)
-                no_heat_img, _ = gen.get_heat_frame_v2(img, heat=False)
+                if self._config.include_no_heat:
+                    no_heat_img, _ = gen.get_heat_frame_v2(img, heat=False)
             elif self._config.heat_mode == 3:
                 img = gen.get_rgb_v3(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
                 heat_img, _ = gen.get_heat_frame_v3(img, heat=True)
-                no_heat_img, _ = gen.get_heat_frame_v3(img, heat=False)
+                if self._config.include_no_heat:
+                    no_heat_img, _ = gen.get_heat_frame_v3(img, heat=False)
                 # print(heat_img.shape, no_heat_img.shape)
             else:
                 raise ValueError("Invalid heat_mode")
             
             imgs.append(img)
             heat_imgs.append(heat_img)
-            no_heat_imgs.append(no_heat_img)
+            if self._config.include_no_heat:
+                no_heat_imgs.append(no_heat_img)
             idxs.append(idx)
             it.iternext()
         idxs = np.array(idxs)
@@ -450,12 +457,12 @@ class Dreamer(nn.Module):
                 "theta_lin": self.theta_lin,
                 "imgs": imgs,
                 "heat": heat_imgs,
-                "no_heat": no_heat_imgs, # NOTE: why did i add this? ans: i think cache is only for eval
+                "no_heat": no_heat_imgs,
                 "labels": labels
             }, f)
         print(f"Cache saved to {cache_path}")
         
-    def get_latent(self, thetas, imgs, heat, no_heat, heat_bool=False):
+    def get_latent(self, thetas, heat_value, imgs, heat, no_heat, heat_bool=False):
         states = np.expand_dims(np.expand_dims(thetas,1),1)
         imgs = np.expand_dims(imgs, 1)
         heat = heat if heat_bool else no_heat
@@ -469,7 +476,9 @@ class Dreamer(nn.Module):
         
         cos = np.cos(states)
         sin = np.sin(states)
-        states = np.concatenate([cos, sin], axis=-1)
+        heat_values = np.ones_like(states) * heat_value
+        if not heat_bool: heat_values *= 0
+        states = np.concatenate([cos, sin, heat_values], axis=-1)
         data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
 
         data = self._wm.preprocess(data)
@@ -485,26 +494,20 @@ class Dreamer(nn.Module):
 
         return g_x, feat, post
 
-    def get_eval_plot(self):
+    def get_eval_plot(self, heat_values=[0.2, 0.4, 0.6, 0.8]):
         self.eval()
         
-        # Get latent predictions for both heat_bool False and True
-        g_x_cold, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=False)
-        g_x_hot, _, _ = self.get_latent(self.theta_lin, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=True)
-        
-        g_x_list = [np.array(g_x_cold), np.array(g_x_hot)]
-        # print(g_x_list[0].mean(), g_x_list[1].mean()); quit()
-        titles = ['w/o Heat', 'w/ Heat']
-        num_modes = len(g_x_list)
+        titles = ['w/ Heat', 'w/o Heat']
+        num_modes = 2  # cold/hot
+        num_heat = len(heat_values)
 
-        # Create plot: each row is a slice, columns alternate g/v for each mode
-        fig, axes = plt.subplots(self.nz, num_modes * 2, figsize=(6 * num_modes * 2, self.nz * 6))
+        fig, axes = plt.subplots(
+            self.nz, num_heat * num_modes * 2,
+            figsize=(6 * num_heat * num_modes, self.nz * 6)
+        )
 
         if self.nz == 1:
-            axes = np.expand_dims(axes, axis=0)  # handle single-row case
-
-        vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]
-        vmin_all = [round(min(np.min(gx), -v), 1) for gx, v in zip(g_x_list, vmax_all)]
+            axes = np.expand_dims(axes, axis=0)
 
         metrics_summary = []
 
@@ -515,60 +518,71 @@ class Dreamer(nn.Module):
 
         def draw_colorbar(image, ax, vmin, vmax):
             cbar = fig.colorbar(image, ax=ax, pad=0.01, fraction=0.05, shrink=0.95, ticks=[vmin, 0, vmax])
-            cbar.ax.set_yticklabels([vmin, 0, vmax], fontsize=12)
+            cbar.ax.set_yticklabels([vmin, 0, vmax], fontsize=10)
 
-        for mode_idx, g_x in enumerate(g_x_list):
-            self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
-            v = self.v
+        for h_idx, heat_val in enumerate(heat_values):
+            # Get both modes: cold (no heat) and hot (heat)
+            g_x_hot, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=True)
+            g_x_list = [np.array(g_x_hot)]
+            if self._config.include_no_heat:
+                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=False)
+                g_x_list = [np.array(g_x_hot), np.array(g_x_cold)]
 
-            # Classification metrics
-            tp = np.where(g_x[self.safe_idxs] > 0)
-            fn = np.where(g_x[self.safe_idxs] <= 0)
-            fp = np.where(g_x[self.unsafe_idxs] > 0)
-            tn = np.where(g_x[self.unsafe_idxs] <= 0)
+            vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]
+            vmin_all = [round(min(np.min(gx), -v), 1) for gx, v in zip(g_x_list, vmax_all)]
 
-            tp_g, fn_g = map(lambda x: x[0].shape[0], (tp, fn))
-            fp_g, tn_g = map(lambda x: x[0].shape[0], (fp, tn))
-            total = tp_g + fn_g + fp_g + tn_g
-            metrics_summary.append((tp_g, tn_g, fp_g, fn_g, total))
+            for mode_idx, g_x in enumerate(g_x_list):
+                # Fill into full 3D grid: (x, y, θ)
+                self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
+                v = self.v
 
-            vmin = vmin_all[mode_idx]
-            vmax = vmax_all[mode_idx]
+                # Classification metrics
+                tp = np.where(g_x[self.safe_idxs] > 0)
+                fn = np.where(g_x[self.safe_idxs] <= 0)
+                fp = np.where(g_x[self.unsafe_idxs] > 0)
+                tn = np.where(g_x[self.unsafe_idxs] <= 0)
 
-            for i in range(self.nz):
-                ax1 = axes[i, mode_idx * 2]
-                ax2 = axes[i, mode_idx * 2 + 1]
+                tp_g, fn_g = map(lambda x: x[0].shape[0], (tp, fn))
+                fp_g, tn_g = map(lambda x: x[0].shape[0], (fp, tn))
+                total = tp_g + fn_g + fp_g + tn_g
+                metrics_summary.append((heat_val, titles[mode_idx], tp_g, tn_g, fp_g, fn_g, total))
 
-                # g(x)
-                im1 = ax1.imshow(
-                    v[:, :, i].T, interpolation='none',
-                    extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
-                    origin="lower", cmap="seismic", vmin=vmin, vmax=vmax, zorder=-1
-                )
-                draw_colorbar(im1, ax1, vmin, vmax)
-                ax1.set_title(f"$g(x)$ {titles[mode_idx]}", fontsize=16)
-                draw_circle(ax1)
+                vmin = vmin_all[mode_idx]
+                vmax = vmax_all[mode_idx]
 
-                # v(x)
-                im2 = ax2.imshow(
-                    v[:, :, i].T > 0, interpolation='none',
-                    extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
-                    origin="lower", cmap="seismic", vmin=-1, vmax=1, zorder=-1
-                )
-                draw_colorbar(im2, ax2, -1, 1)
-                ax2.set_title(f"$v(x)$ {titles[mode_idx]}", fontsize=16)
-                draw_circle(ax2)
+                for i in range(self.nz):
+                    col_base = h_idx * num_modes * 2 + mode_idx * 2
+                    ax1 = axes[i, col_base]
+                    ax2 = axes[i, col_base + 1]
+
+                    im1 = ax1.imshow(
+                        v[:, :, i].T, interpolation='none',
+                        extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
+                        origin="lower", cmap="seismic", vmin=vmin, vmax=vmax, zorder=-1
+                    )
+                    draw_colorbar(im1, ax1, vmin, vmax)
+                    ax1.set_title(f"$g(x)$ {titles[mode_idx]}\nHeat={heat_val}", fontsize=12)
+                    draw_circle(ax1)
+
+                    im2 = ax2.imshow(
+                        v[:, :, i].T > 0, interpolation='none',
+                        extent=[self._config.x_min, self._config.x_max, self._config.y_min, self._config.y_max],
+                        origin="lower", cmap="seismic", vmin=-1, vmax=1, zorder=-1
+                    )
+                    draw_colorbar(im2, ax2, -1, 1)
+                    ax2.set_title(f"$v(x)$ {titles[mode_idx]}\nHeat={heat_val}", fontsize=12)
+                    draw_circle(ax2)
 
         fig.tight_layout(rect=[0, 0.05, 1, 0.95])
 
-        # Summary title
         summary_lines = [
-            rf"$\text{{[{titles[idx]}]  TP={tp_g/total:.0%}  TN={tn_g/total:.0%}  FP={fp_g/total:.0%}  FN={fn_g/total:.0%}}}$"
-            for idx, (tp_g, tn_g, fp_g, fn_g, total) in enumerate(metrics_summary)
+            rf"$\text{{Heat={hv:.1f} {title}:  TP={tp/total:.0%}  TN={tn/total:.0%}  FP={fp/total:.0%}  FN={fn/total:.0%}}}$"
+            for hv, title, tp, tn, fp, fn, total in metrics_summary
         ]
-
         fig.suptitle("\n".join(summary_lines), fontsize=14)
 
+        from io import BytesIO
+        from PIL import Image
         with BytesIO() as buf:
             plt.savefig(buf, format="png")
             plt.close(fig)
@@ -576,8 +590,7 @@ class Dreamer(nn.Module):
             image = Image.open(buf).convert("RGB")
 
         self.train()
-        return np.array(image), tp, fn, fp, tn
-
+        return np.array(image), metrics_summary
 
     
 def count_steps(folder):
@@ -612,7 +625,7 @@ def main(config):
     action_space = gym.spaces.Box(
         low=-config.turnRate, high=config.turnRate, shape=(1,), dtype=np.float32
     )
-    bounds = np.array([[config.x_min, config.x_max], [config.y_min, config.y_max], [0, 2 * np.pi]])
+    bounds = np.array([[config.x_min, config.x_max], [config.y_min, config.y_max], [0, 2 * np.pi], [0, 1]])
     low = bounds[:, 0]
     high = bounds[:, 1]
     midpoint = (low + high) / 2.0
@@ -621,7 +634,7 @@ def main(config):
         np.float32(midpoint - interval/2),
         np.float32(midpoint + interval/2),
     )
-    # print(f"[dreamer_offline/main]: {gt_observation_space}"); quit()
+    # print(f"[dreamer_offline/main]: {gt_observation_space}")
     
     image_size = config.size[0] # 128
     
@@ -640,7 +653,7 @@ def main(config):
         )
 
     obs_observation_space = gym.spaces.Box(
-        low=-1, high=1, shape=(2,), dtype=np.float32
+        low=-1, high=1, shape=(3,), dtype=np.float32
     )
     
     if config.aug_rssm:
@@ -822,7 +835,7 @@ def main(config):
                 score, success = evaluate(
                     other_dataset=expert_dataset, eval_prefix="pretrain"
                 )
-                lx_plot, tp, fn, fp, tn = agent.get_eval_plot()
+                lx_plot, _ = agent.get_eval_plot()
 
                 logger.image("pretrain/lx_plot", np.transpose(lx_plot, (2, 0, 1)))
                 

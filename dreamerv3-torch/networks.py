@@ -330,7 +330,6 @@ class MultiEncoder(nn.Module):
             for k, v in shapes.items()
             if len(v) in (1, 2) and re.match(mlp_keys, k)
         }
-        # print(shapes); quit()
         if multimodal and aug_rssm:
             self.heat_cnn_shapes = {
                 k: v for k, v in shapes.items() if len(v) == 3 and re.match(heat_keys, k)
@@ -338,6 +337,7 @@ class MultiEncoder(nn.Module):
         else: 
             self.heat_cnn_shapes = None
         
+        # print(shapes)
         # print("Encoder CNN shapes:", self.cnn_shapes)
         # print("Encoder MLP shapes:", self.mlp_shapes)
         # print("Heat CNN shapes:", self.heat_cnn_shapes); quit()
@@ -354,6 +354,7 @@ class MultiEncoder(nn.Module):
             
         if self.mlp_shapes:
             input_size = sum([sum(v) for v in self.mlp_shapes.values()])
+            # print(input_size); quit()
             self._mlp = MLP(
                 input_size,
                 None,
