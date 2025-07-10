@@ -389,8 +389,6 @@ class Dreamer(nn.Module):
         no_heat_imgs = [] # TODO: get rid of this and organize
         labels = []
         
-        # TODO: check if 'it' exists, otherwise create it
-        
         it = np.nditer(v, flags=["multi_index"])
         while not it.finished:
             idx = it.multi_index
@@ -414,12 +412,12 @@ class Dreamer(nn.Module):
                 heat_img = gen.get_heat_frame_v1(img, heat=True)
                 no_heat_img = gen.get_heat_frame_v1(img, heat=False)
             elif self._config.heat_mode == 2:
-                img = gen.get_rgb_v2(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
+                img = gen.get_rgb_v2(img, self._config, heat=True)
                 heat_img, _ = gen.get_heat_frame_v2(img, heat=True)
                 if self._config.include_no_heat:
                     no_heat_img, _ = gen.get_heat_frame_v2(img, heat=False)
             elif self._config.heat_mode == 3:
-                img = gen.get_rgb_v3(img, self._config, heat=True) # TODO: need to setup vis for no heat version of this
+                img = gen.get_rgb_v3(img, self._config, heat=True)
                 heat_img, _ = gen.get_heat_frame_v3(img, heat=True)
                 if self._config.include_no_heat:
                     no_heat_img, _ = gen.get_heat_frame_v3(img, heat=False)
@@ -478,9 +476,13 @@ class Dreamer(nn.Module):
         sin = np.sin(states)
         heat_values = np.ones_like(states) * heat_value
         if not heat_bool: heat_values *= 0
-        states = np.concatenate([cos, sin, heat_values], axis=-1)
+        
+        if self._config.obs_priv_heat:
+            states = np.concatenate([cos, sin, heat_values], axis=-1)
+        else:
+            states = np.concatenate([cos, sin], axis=-1)
+            
         data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
-
         data = self._wm.preprocess(data)
         embed = self._wm.encoder(data)
 
@@ -497,8 +499,8 @@ class Dreamer(nn.Module):
     def get_eval_plot(self, heat_values=[0.2, 0.4, 0.6, 0.8]):
         self.eval()
         
-        titles = ['w/ Heat', 'w/o Heat']
-        num_modes = 2  # cold/hot
+        titles = ['w/ Heat', 'w/o Heat'] if self._config.include_no_heat else ['w/ Heat']
+        num_modes = 2 if self._config.include_no_heat else 1
         num_heat = len(heat_values)
 
         fig, axes = plt.subplots(
@@ -646,15 +648,20 @@ def main(config):
         else:
             image_observation_space = gym.spaces.Box(
                 low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
-            ) # TODO: softcode 4 (e.g. make it a function of config params)
+            )
     else:
         image_observation_space = gym.spaces.Box(
             low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
         )
 
-    obs_observation_space = gym.spaces.Box(
-        low=-1, high=1, shape=(3,), dtype=np.float32
-    )
+    if config.obs_priv_heat:
+        obs_observation_space = gym.spaces.Box(
+            low=-1, high=1, shape=(3,), dtype=np.float32
+        )
+    else:
+        obs_observation_space = gym.spaces.Box(
+            low=-1, high=1, shape=(2,), dtype=np.float32
+        )
     
     if config.aug_rssm:
         heat_observation_space = gym.spaces.Box(
@@ -704,14 +711,6 @@ def main(config):
         
     step = logger.step
     agent.requires_grad_(requires_grad=False)
-    
-    # TODO: complete
-    # is_eval = True # TODO: read in as optional parser arg
-    # eval_ckpt = "" # read in as optional parser arg
-    # if is_eval:
-    #     checkpoint = torch.load(logdir / eval_ckpt, weights_only=False)
-    #     pass # TODO: finish (prob copy paste from below)
-    
     
     if (logdir / "latest.pt").exists():
         print("Loading from checkpoint...")

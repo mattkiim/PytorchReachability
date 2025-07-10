@@ -252,8 +252,16 @@ class HeatFrameGenerator:
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
-            rgb_out[..., 2:3][inside_mask] = temp
-            rgb_out[..., 2:3][outside_mask] = temp
+            temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+            decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+            
+            # rgb_out[..., 2:3][inside_mask] = temp
+            # rgb_out[..., 2:3][outside_mask] = temp
             
         else:
             temp = self.vehicle_temp_rgb
@@ -263,6 +271,9 @@ class HeatFrameGenerator:
             outside_mask = np.squeeze(outside_mask, axis=-1)
             rgb_out[inside_mask] = light_blue
             rgb_out[outside_mask] = light_blue
+            
+            # rgb_out[..., 2:3][inside_mask] = temp
+            # rgb_out[..., 2:3][outside_mask] = temp
 
         return rgb_out
       

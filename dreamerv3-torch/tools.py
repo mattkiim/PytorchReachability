@@ -203,10 +203,10 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     
     num_train = config.num_train_trajs
         
-    if not config.include_no_heat:
-        # take the last half of demos
-        demos = demos[len(demos) // 2:]
-        num_train = config.num_train_trajs // 2    
+    # if not config.include_no_heat:
+    #     # take the last half of demos
+    #     demos = demos[len(demos) // 2:]
+    #     num_train = config.num_train_trajs // 2
     
     
     pixel_keys = sorted(['image', 'heat'])
@@ -231,10 +231,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             for obs_key in pixel_keys:
                 transition[obs_key] = traj["obs"][obs_key][t]
                 
-                # FIXME: temp below
-                # transition[obs_key] = traj["obs"][obs_key][t][..., :3]
-                # transition['heat'] = traj["obs"][obs_key][t][..., -1:]
-
             if len(state_keys) != 0:
                 curr_obs_state_vec = [
                     traj["obs"][obs_key][t] for obs_key in state_keys
@@ -242,7 +238,12 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 transition["state"] = curr_obs_state_vec
             
             transition["privileged_state"] = traj['obs']['priv_state'][t]
-            transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
+            
+            if config.obs_priv_heat:
+                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
+            else:
+                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t])]
+        
             transition["reward"] = np.array(
                 0, dtype=np.float32
             )
@@ -259,7 +260,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             if config.heat_mode < 2:
                 heat_failure = heat
             elif config.heat_mode == 2 or config.heat_mode == 3:
-                heat_failure = heat > config.heat_threshold # TODO: tune / ask
+                heat_failure = heat > config.heat_threshold 
             # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
@@ -267,7 +268,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 transition["failure"] = heat_failure
                 
             # check if state is in obstacle
-            # transition["failure"] = np.array(np.linalg.norm(traj['obs']['priv_state'][t][:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r, dtype=np.float32) # TODO: make sure it's in obstacle for heat as well
             transition["is_first"] = np.array(t == 0, dtype=np.bool_)
             transition["is_last"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["is_terminal"] = np.array(traj["dones"][t], dtype=np.bool_)

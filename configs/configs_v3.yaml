@@ -178,3 +178,4 @@ defaults:
   test: False
 
   include_no_heat: False
+  obs_priv_heat: True # whether to use privileged heat in the observation state
