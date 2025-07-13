@@ -518,13 +518,15 @@ def rollout_dubins(
     lz, feat, post, states,
     heat_value_init, policy,
     T=100, rollout_batch_size=100,
-    heat=True        # ← honour this!
+    heat=True 
 ):
     """
     Rolls trajectories and builds a confusion matrix wrt
         combined_pred = min(l(x), V(x)) > 0.
     Returns dict(results), trajectories, failures.
     """
+    # TODO: save a boundary IC trajectory (which is currently in latents), and convert to RGB + Heat images, then create video
+    
     # ------------------------------------------------------------------ #
     # 1.  Prediction (static): min(l, V) > 0
     EPS           = 1e-6
@@ -542,6 +544,8 @@ def rollout_dubins(
     N            = states.shape[0]
     trajectories = []          # list of (xs, ys)
     failures     = []          # list of bool
+    fp_trajs = []  # list of bool
+    fn_trajs = []  # list of bool
     results      = dict(TP=0, TN=0, FP=0, FN=0)
 
     # ------------------------------------------------------------------ #
@@ -598,6 +602,11 @@ def rollout_dubins(
         for i in range(xs_all.shape[0]):
             trajectories.append((xs_all[i], ys_all[i]))
             failures.append(bool(failure[i]))
+            
+            if bool(failure[i]) and vf_binary[start+i]:        # False-positive
+                fp_trajs.append((xs_all[i], ys_all[i]))
+            elif (not bool(failure[i])) and (not vf_binary[start+i]):  # False-negative
+                fn_trajs.append((xs_all[i], ys_all[i]))
 
         # ---------------- confusion-matrix update ----------------------
         for i in range(end - start):
@@ -613,27 +622,41 @@ def rollout_dubins(
             else:
                 results["FN"] += 1
 
-    return results, np.array(trajectories, dtype=object), np.array(failures, dtype=bool)
-
-
-
-# --- main plotting -------------------------------------------------------
+    return (results,
+            np.array(trajectories, dtype=object),
+            np.array(failures,     dtype=bool),
+            np.array(fp_trajs,     dtype=object),
+            np.array(fn_trajs,     dtype=object))
+    
+def single_rollout(initial_condition):
+    # TODO: implement
+    """
+    1. take the initial condition
+    2. rollout trajectory using safe policy
+    3. convert real states to RGB + Heat (see if it is easy to reference generate_data_traj_cont.py)
+    4. visualize both
+    5. save the trajectory as a video
+    6. return and call in get_eval_plot
+    """
+    
+    pass
 
 def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     from itertools import product
     from matplotlib.colors import ListedColormap
+    from matplotlib import colors as mcolors
 
     theta_heat_pairs = list(product(thetas, heat_values))
     nrows = 2 if config.include_no_heat else 1
     ncols = len(theta_heat_pairs)
     figsize = (3 * ncols, 6)
 
-    # handy factory -------------------------------------------------------
+    # function to make figures with subplots
     def _make_fig():
         fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
         return fig, np.atleast_2d(ax)
 
-    # create figures ------------------------------------------------------
+    # create figures
     fig_lz, axes_lz = _make_fig()
     fig_lz_bin, axes_lz_bin = _make_fig()
     fig_v, axes_v = _make_fig()
@@ -642,10 +665,10 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     fig_combined_bin, axes_combined_bin = _make_fig()
     fig_rollout, axes_rollout = _make_fig()
 
-    # colour map for binary safe/unsafe (0 unsafe → red, 1 safe → green) ---
+    # colour map for binary safe/unsafe (0 unsafe = red, 1 safe = green)
     binary_cmap = ListedColormap(["#276fae", "#e6dc22"])
 
-    # ground‑truth slice --------------------------------------------------
+    # ground‑truth slice
     gt = np.load(f"{config.ground_truth_path}_{config.nx}.npz")
     x_lin = np.linspace(config.x_min, config.x_max, config.nx)
     y_lin = np.linspace(config.y_min, config.y_max, config.ny)
@@ -655,12 +678,12 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     if config.include_no_heat:
         plot_list.append((False, "no_heat"))
 
-    # iterate over each (theta, heat) column ------------------------------
+    # iterate over each (theta, heat) column
     for col, (theta, heat_value) in enumerate(theta_heat_pairs):
         idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, thetas_prev, states_lst = cache[(theta, heat_value)]
         states_tensor = torch.stack(states_lst).float().to(config.device)
 
-        # evaluate both HEAT / NO‑HEAT rows -------------------------------
+        # evaluate both HEAT / NO‑HEAT rows
         for row, (heat_bool, lbl) in enumerate(plot_list):
             feat, lz, post = get_latent(
                 wm,
@@ -674,7 +697,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
             vals = evaluate_V(feat)
             combined = np.minimum(vals, lz)
 
-            # reshape for image display ----------------------------------
+            # reshape for image display
             lz_img = lz.reshape(config.nx, config.ny).T
             v_img = vals.reshape(config.nx, config.ny).T
             comb_img = combined.reshape(config.nx, config.ny).T
@@ -683,18 +706,18 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
             v_bin = (v_img > 0).astype(float)
             comb_bin = (comb_img > 0).astype(float)
 
-            # continuous heatmaps ----------------------------------------
+            # continuous heatmaps
             axes_lz[row, col].imshow(lz_img, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1, cmap="seismic")
             axes_v[row, col].imshow(v_img, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1, cmap="viridis")
             axes_combined[row, col].imshow(comb_img, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=-1, vmax=1, cmap="coolwarm")
 
-            # binary (colour) maps ---------------------------------------
+            # binary (colour) maps
             axes_lz_bin[row, col].imshow(lz_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap=binary_cmap)
             axes_v_bin[row, col].imshow(v_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap=binary_cmap)
             axes_combined_bin[row, col].imshow(comb_bin, extent=(-1.5, 1.5, -1.5, 1.5), origin="lower", vmin=0, vmax=1, cmap=binary_cmap)
             
-            # trajectory rollouts ------------------------------------------
-            results, trajectories, failures = rollout_dubins(
+            # trajectory rollouts
+            results, trajectories, failures, fp_trajs, fn_trajs = rollout_dubins(
                 lz, feat, post, states_tensor,
                 heat_value_init=heat_value,
                 policy=policy,
@@ -702,23 +725,58 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
                 heat=heat_bool
             )
 
-            from matplotlib import colors as mcolors
-
             ax = axes_rollout[row, col]
-
+            # trajectory rollouts
             for (xs, ys), is_failure in zip(trajectories, failures):
                 # build one RGBA array whose alpha increases with time
                 base_rgb   = mcolors.to_rgba('red' if is_failure else 'green')
                 Tpts       = xs.shape[0]
-                alphas     = np.linspace(0.15, 1.0, Tpts)        # start faint → end opaque
+                alphas     = np.linspace(0.15, 1.0, Tpts)
                 colors_rgba = np.tile(base_rgb, (Tpts, 1))
-                colors_rgba[:, 3] = alphas                       # replace alpha channel
-
+                colors_rgba[:, 3] = alphas
                 ax.scatter(xs, ys, s=3, marker='o', color=colors_rgba, linewidths=0)
+                
+            # misclassified trajectories
+            # print(fp_trajs.shape, fn_trajs.shape); quit()
+            for xs, ys in fp_trajs:
+                base_rgb   = mcolors.to_rgba('dodgerblue')
+                Tpts       = xs.shape[0]
+                alphas     = np.linspace(0.05, 0.4, Tpts)
+                rgba_arr   = np.tile(base_rgb, (Tpts, 1))
+                rgba_arr[:, 3] = alphas
+                ax.scatter(xs, ys, s=2.5, marker='o',
+                        color=rgba_arr, linewidths=0, zorder=3)
 
+            # false-negatives (safe but predicted unsafe)
+            for xs, ys in fn_trajs:
+                base_rgb   = mcolors.to_rgba('magenta')
+                Tpts       = xs.shape[0]
+                alphas     = np.linspace(0.05, 0.4, Tpts)
+                rgba_arr   = np.tile(base_rgb, (Tpts, 1))
+                rgba_arr[:, 3] = alphas
+                ax.scatter(xs, ys, s=2.5, marker='o',
+                        color=rgba_arr, linewidths=0, zorder=3)
+                
+            # overlay the BRT in black
+            key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
+            if key in gt:
+                gt_slice = gt[key]
+                ax.contour(
+                    X, Y, gt_slice,
+                    levels=[0],
+                    colors="black",
+                    linewidths=1.0,
+                    zorder=4
+                )
+    
+            # legend
+            ax.plot([], [], color='dodgerblue',  linewidth=1.0, label='FP')
+            ax.plot([], [], color='magenta',  linewidth=1.0, label='FN')
+            ax.plot([], [], color='green',  linewidth=1.0, label='Safe')
+            ax.plot([], [], color='red',  linewidth=1.0, label='Unsafe')
+            ax.legend(loc='lower right', fontsize=6, framealpha=0.6)
 
-
-            # Obstacle
+            # obstacle
             ax.add_patch(patches.Circle((config.obs_x, config.obs_y),
                                         config.obs_r, edgecolor='black',
                                         facecolor='none', linestyle='--', linewidth=1.5))
@@ -744,21 +802,20 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
                     bbox=dict(facecolor="white", alpha=0.7, edgecolor="gray")
                 )
 
-            # title ------------------------------------------------------
+            # title
             title = f"Θ={theta:.2f}  H={heat_value:.2f}  ({lbl.upper()})"
             for ax_group in [axes_lz, axes_lz_bin, axes_v, axes_v_bin, axes_combined, axes_combined_bin]:
                 ax_group[row, col].set_title(title, fontsize=8)
 
-            # ground‑truth overlay (row 0 only) ---------------------------
+            # ground‑truth overlay (row 0 only)
             if row == 0:
-                
                 key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
                 if key in gt:
                     gt_slice = gt[key]
                     for ax_group in [axes_lz, axes_v, axes_combined, axes_lz_bin, axes_v_bin, axes_combined_bin]:
                         ax_group[row, col].contour(X, Y, gt_slice, levels=[0], colors="black", linewidths=1.0)
                         
-                    # confusion matrix on *continuous min(V,l)* ------------
+                    # confusion matrix on continuous min(V,l)
                     gt_flat   = gt_slice.flatten()
                     pred_flat = comb_img.flatten()
                     EPS = 1e-6
@@ -780,16 +837,14 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
                             bbox=dict(facecolor="white", alpha=0.7, edgecolor="gray")
                         )
                         
-                    # trajectory rollouts ------------------------------------------
 
-
-            # obstacle ---------------------------------------------------
+            # obstacle
             for ax_group in [axes_lz, axes_lz_bin, axes_v, axes_v_bin, axes_combined, axes_combined_bin]:
                 ax = ax_group[row, col]
                 ax.add_patch(patches.Circle((config.obs_x, config.obs_y), config.obs_r, linewidth=1, edgecolor="red", facecolor="none", linestyle="--"))
                 ax.axis("off")
 
-    # y‑labels on leftmost column ----------------------------------------
+    # y‑labels on leftmost column
     labels = [
         (axes_lz, "l(x)"),
         (axes_lz_bin, "Binary l(x)"),
@@ -804,7 +859,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
         if config.include_no_heat:
             ax_arr[1, 0].set_ylabel(f"{base_lbl} (NO HEAT)")
 
-    # figure‑level titles & layout ---------------------------------------
+    # figure‑level titles & layout
     fig_lz.suptitle("Safety Margin l(x)", fontsize=14)
     fig_lz_bin.suptitle("Binary l(x) > 0", fontsize=14)
     fig_v.suptitle("Critic Value V(x)", fontsize=14)
@@ -828,8 +883,6 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
         fig_rollout
     )
 
-
-# -------------------------------------------------------------------------------------------
 
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
