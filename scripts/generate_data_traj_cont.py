@@ -422,7 +422,6 @@ def gen_one_traj_img(config, curr_traj_count=0):
     norm_temp = 1. - vehicle_temp / DEFAULT_VEHICLE_TEMP
     
     state_obs.append(states[2].numpy())
-    state_obs.append(np.array(norm_temp, dtype=np.float32))
     # print(state_obs); quit()
     
     state_gt.append(states.numpy()) # gt state for debugging
