@@ -395,12 +395,12 @@ class Dreamer(nn.Module):
             x = xs[idx[0]]
             y = ys[idx[1]]
             theta = thetas[idx[2]]
+            x = x - np.cos(theta)*1*0.05
+            y = y - np.sin(theta)*1*0.05
             if (x**2 + y**2) < (self._config.obs_r**2):
                 labels.append(1) # unsafe
             else:
                 labels.append(0) # safe
-            x = x - np.cos(theta)*1*0.05
-            y = y - np.sin(theta)*1*0.05
             img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
             gen = HeatFrameGenerator(self._config)
             gen._compute_geometry(img.shape)
@@ -483,6 +483,9 @@ class Dreamer(nn.Module):
             states = np.concatenate([cos, sin], axis=-1)
             
         data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
+        # if self._config.include_no_heat:
+            # data = {'obs_state': states, 'image': imgs, 'heat': heat, 'no_heat': no_heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
+            
         data = self._wm.preprocess(data)
         embed = self._wm.encoder(data)
 
