@@ -168,7 +168,7 @@ defaults:
   multimodal: True
   aug_rssm: True
   heat_mode: 3
-  heat_prop: 0.0 # 0.5
+  heat_prop: 0.5 # 0.5
   heat_threshold: 0.8
   fill_cache: True
   use_wandb: False
@@ -177,5 +177,5 @@ defaults:
   alpha_out: 20
   test: False
 
-  include_no_heat: False
+  include_no_heat: True
   obs_priv_heat: True # whether to use privileged heat in the observation state
