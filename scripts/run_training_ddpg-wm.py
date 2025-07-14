@@ -392,7 +392,7 @@ def make_cache(config, thetas, heat_values):
                     img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
                     heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=heat_value)
                     if config.include_no_heat:
-                        no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value)
+                        no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value) # BUG: heat=False seems to remove vehicle
                 else:
                     raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
 
