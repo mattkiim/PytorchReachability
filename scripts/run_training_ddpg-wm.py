@@ -460,7 +460,7 @@ def get_latent(wm, thetas, heat_values, imgs, heat_imgs, no_heat_imgs, heat_bool
     heat_values = np.ones_like(cos) * heat_values # TODO: after adding to cache, fix this
     if not heat_bool: heat_values *= 0
     
-    print(heat_values.mean())
+    # print(heat_values.mean())
     if config.obs_priv_heat:
         states = np.concatenate([cos, sin, heat_values], axis=-1)
     else:

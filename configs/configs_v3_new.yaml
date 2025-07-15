@@ -168,7 +168,7 @@ defaults:
   multimodal: True
   aug_rssm: True
   heat_mode: 3
-  heat_prop: 0.5 # 0.5
+  heat_prop: 0.0 # 0.5
   heat_threshold: 0.8
   fill_cache: True
   use_wandb: False

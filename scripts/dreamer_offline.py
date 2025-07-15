@@ -372,94 +372,110 @@ class Dreamer(nn.Module):
 
         print(f"Cache loaded from {cache_path}")
         
-    def fill_cache(self):
-        print('filling cache')
+    def fill_cache(self, heat_values=[0.2, 0.4, 0.6, 0.8]):
+        print("filling cache")
         cache_path = self._config.wm_cache_path
+        if cache_path is None:
+            raise NameError("No cache_path")
+
         nx, ny, nz = self._config.nx, self._config.ny, 3
         self.nz = nz
         self.v = np.zeros((nx, ny, nz))
-        v = self.v
         xs = np.linspace(self._config.x_min, self._config.x_max, nx)
         ys = np.linspace(self._config.y_min, self._config.y_max, ny)
-        thetas= np.linspace(0, 2*np.pi, nz, endpoint=True)
-        it = np.nditer(v, flags=['multi_index'])
-        idxs = []  
+        thetas = np.linspace(0, 2 * np.pi, nz, endpoint=True)
+
+        all_rgb_imgs = {}
+        all_heat_imgs = {}
+        all_no_heat_imgs = {}
         imgs = []
-        heat_imgs = []
-        no_heat_imgs = [] # TODO: get rid of this and organize
         labels = []
-        
-        it = np.nditer(v, flags=["multi_index"])
+        idxs = []
+
+        it = np.nditer(self.v, flags=["multi_index"])
         while not it.finished:
             idx = it.multi_index
             x = xs[idx[0]]
             y = ys[idx[1]]
             theta = thetas[idx[2]]
-            x = x - np.cos(theta)*1*0.05
-            y = y - np.sin(theta)*1*0.05
-            if (x**2 + y**2) < (self._config.obs_r**2):
-                labels.append(1) # unsafe
-            else:
-                labels.append(0) # safe
-            img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
-            gen = HeatFrameGenerator(self._config)
-            gen._compute_geometry(img.shape)
-            
-            if self._config.heat_mode == 0:
-                heat_img = gen.get_heat_frame_v0(img, heat=True)
-                no_heat_img = gen.get_heat_frame_v0(img, heat=False)
-            elif self._config.heat_mode == 1:
-                heat_img = gen.get_heat_frame_v1(img, heat=True)
-                no_heat_img = gen.get_heat_frame_v1(img, heat=False)
-            elif self._config.heat_mode == 2:
-                img = gen.get_rgb_v2(img, self._config, heat=True)
-                heat_img, _ = gen.get_heat_frame_v2(img, heat=True)
-                if self._config.include_no_heat:
-                    no_heat_img, _ = gen.get_heat_frame_v2(img, heat=False)
-            elif self._config.heat_mode == 3:
-                img = gen.get_rgb_v3(img, self._config, heat=True)
-                heat_img, _ = gen.get_heat_frame_v3(img, heat=True)
-                if self._config.include_no_heat:
-                    no_heat_img, _ = gen.get_heat_frame_v3(img, heat=False)
-                # print(heat_img.shape, no_heat_img.shape)
-            else:
-                raise ValueError("Invalid heat_mode")
-            
-            imgs.append(img)
-            heat_imgs.append(heat_img)
-            if self._config.include_no_heat:
-                no_heat_imgs.append(no_heat_img)
+            x -= np.cos(theta) * 0.05
+            y -= np.sin(theta) * 0.05
+
+            is_unsafe = (x**2 + y**2) < (self._config.obs_r**2)
+            labels.append(int(is_unsafe))
             idxs.append(idx)
+
+            img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
+            imgs.append(img)
+
             it.iternext()
+
+        # generate all heat/no_heat images *after* image eval
+        for heat_val in heat_values:
+            print(f"processing heat value {heat_val}")
+            rgb_imgs = []
+            heat_imgs = []
+            no_heat_imgs = []
+
+            for img in imgs:
+                gen = HeatFrameGenerator(self._config)
+                gen._compute_geometry(img.shape)
+
+                if self._config.heat_mode == 0:
+                    heat = gen.get_heat_frame_v0(img, heat=True)
+                    no_heat = gen.get_heat_frame_v0(img, heat=False)
+                elif self._config.heat_mode == 1:
+                    heat = gen.get_heat_frame_v1(img, heat=True)
+                    no_heat = gen.get_heat_frame_v1(img, heat=False)
+                elif self._config.heat_mode == 2:
+                    rgb = gen.get_rgb_v2(img, self._config, heat=True)
+                    heat, _ = gen.get_heat_frame_v2(rgb, heat=True, heat_value=heat_val)
+                    no_heat = None
+                    if self._config.include_no_heat:
+                        no_heat, _ = gen.get_heat_frame_v2(rgb, heat=False, heat_value=heat_val)
+                elif self._config.heat_mode == 3:
+                    rgb = gen.get_rgb_v3(img, self._config, heat=True, heat_value=heat_val)
+                    heat, _ = gen.get_heat_frame_v3(rgb, heat=True, heat_value=heat_val)
+                    no_heat = None
+                    if self._config.include_no_heat:
+                        no_heat, _ = gen.get_heat_frame_v3(rgb, heat=False, heat_value=heat_val)
+                else:
+                    raise ValueError("Invalid heat_mode")
+
+                heat_imgs.append(heat)
+                rgb_imgs.append(rgb)
+                if self._config.include_no_heat:
+                    no_heat_imgs.append(no_heat)
+
+            all_heat_imgs[heat_val] = heat_imgs
+            all_rgb_imgs[heat_val] = rgb_imgs
+            if self._config.include_no_heat:
+                all_no_heat_imgs[heat_val] = no_heat_imgs
+
         idxs = np.array(idxs)
         self.idxs = idxs
         self.safe_idxs = np.where(np.array(labels) == 0)
         self.unsafe_idxs = np.where(np.array(labels) == 1)
-        self.theta_lin = thetas[idxs[:,2]]
-        self.imgs = imgs
-        self.heat_imgs = heat_imgs
-        self.no_heat_imgs = no_heat_imgs
-        print('done!')
-        
-        if cache_path is None:
-            raise NameError("No cache_path")
+        self.theta_lin = thetas[idxs[:, 2]]
+        self.imgs = all_rgb_imgs
+        self.heat_imgs = all_heat_imgs
+        self.no_heat_imgs = all_no_heat_imgs
 
-        cache_path = f"{cache_path}_{self._config.alpha_in}.pkl"
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        
-        with open(cache_path, "wb") as f:
+        cache_file = f"{cache_path}_{self._config.alpha_in}.pkl"
+        with open(cache_file, "wb") as f:
             pickle.dump({
                 "idxs": idxs,
                 "safe_idxs": self.safe_idxs,
                 "unsafe_idxs": self.unsafe_idxs,
                 "theta_lin": self.theta_lin,
-                "imgs": imgs,
-                "heat": heat_imgs,
-                "no_heat": no_heat_imgs,
+                "imgs": all_rgb_imgs,
+                "heat": all_heat_imgs,
+                "no_heat": all_no_heat_imgs,
                 "labels": labels
             }, f)
-        print(f"Cache saved to {cache_path}")
-        
+        print(f"Cache saved to {cache_file}")
+
     def get_latent(self, thetas, heat_value, imgs, heat, no_heat, heat_bool=False):
         states = np.expand_dims(np.expand_dims(thetas,1),1)
         imgs = np.expand_dims(imgs, 1)
@@ -527,10 +543,10 @@ class Dreamer(nn.Module):
 
         for h_idx, heat_val in enumerate(heat_values):
             # Get both modes: cold (no heat) and hot (heat)
-            g_x_hot, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=True)
+            g_x_hot, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=True)
             g_x_list = [np.array(g_x_hot)]
             if self._config.include_no_heat:
-                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs, self.no_heat_imgs, heat_bool=False)
+                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=False)
                 g_x_list = [np.array(g_x_hot), np.array(g_x_cold)]
 
             vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]
