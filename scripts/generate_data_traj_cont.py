@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import argparse
 import io
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 import torch
 import pickle
@@ -11,6 +11,7 @@ import ruamel.yaml as yaml
 import os
 import sys
 import copy
+import math
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -277,7 +278,206 @@ class HeatFrameGenerator:
             # rgb_out[..., 2:3][outside_mask] = temp
 
         return rgb_out
-      
+
+def draw_comet(draw, base_center, angle_rad, length, width, fill_color="blue"):
+    """Draw a comet‑shaped arrow whose *base* is centred on ``base_center``.
+
+    The shape is a triangle (tip) + a semicircle (tail) giving a smooth, tapered
+    look.  ``angle_rad`` is the *world* heading measured anticlockwise from +x.
+    All positions are pixel coordinates *in the current canvas*.
+    """
+    # PIL's coordinate system has y going *down*; flip the sign so +y in world
+    # (up) maps correctly when drawing the comet
+    angle_rad = -angle_rad
+
+    tip_x = base_center[0] + length * math.cos(angle_rad)
+    tip_y = base_center[1] + length * math.sin(angle_rad)
+
+    radius = width / 2
+    # perpendicular for the triangle base
+    perp = angle_rad + math.pi / 2
+    p1_x = base_center[0] + radius * math.cos(perp)
+    p1_y = base_center[1] + radius * math.sin(perp)
+    p2_x = base_center[0] - radius * math.cos(perp)
+    p2_y = base_center[1] - radius * math.sin(perp)
+
+    # Arrow head (triangle)
+    draw.polygon([(tip_x, tip_y), (p1_x, p1_y), (p2_x, p2_y)], fill=fill_color)
+
+    # Semicircle tail
+    start_angle_deg = math.degrees(angle_rad) + 90
+    end_angle_deg = math.degrees(angle_rad) - 90
+    bbox = [
+        (base_center[0] - radius, base_center[1] - radius),
+        (base_center[0] + radius, base_center[1] + radius),
+    ]
+    draw.pieslice(bbox, start=start_angle_deg, end=end_angle_deg, fill=fill_color)
+
+def get_frame_pil(states, config, heat_gen, curr_traj_count: int = 0):
+    """Return ``img_array_combined, hot, vehicle_temp`` exactly like the original
+    Matplotlib implementation, but rendered with **PIL** at high quality.
+
+    * Anti‑aliasing: render at ``scale``× resolution then down‑sample with
+      ``Image.Resampling.LANCZOS`` (default ``scale=4``).
+    * Obstacle is drawn as a filled red circle.
+    * Vehicle is rendered as a blue *comet* arrow via :pyfunc:`draw_comet`.
+    """
+    # ------------------------------------------------------------------
+    # 1. Parameters & helpers
+    # ------------------------------------------------------------------
+    scale = getattr(config, "aa_scale", 4)
+    base_w, base_h = config.size  # final output resolution (width, height)
+    hi_w, hi_h = base_w * scale, base_h * scale
+
+    def world_to_px(coord):
+        """Map ``(x, y)`` in world space to *hi‑res* pixel coords."""
+        x, y = coord
+        px = int((x - config.x_min) / (config.x_max - config.x_min) * hi_w)
+        # Invert y: world +y is up, pixel +y is down
+        py = int((config.y_max - y) / (config.y_max - config.y_min) * hi_h)
+        return px, py
+
+    # ------------------------------------------------------------------
+    # 2. Create blank hi‑res canvas & Pillow draw context
+    # ------------------------------------------------------------------
+    img_hi = Image.new("RGB", (hi_w, hi_h), "white")
+    draw = ImageDraw.Draw(img_hi)
+
+    # ------------------------------------------------------------------
+    # 3. Draw obstacle (filled red circle)
+    # ------------------------------------------------------------------
+    obs_center_px = world_to_px((config.obs_x, config.obs_y))
+    obs_r_px = (config.obs_r / (config.x_max - config.x_min)) * hi_w
+    bbox_obs = [
+        obs_center_px[0] - obs_r_px,
+        obs_center_px[1] - obs_r_px,
+        obs_center_px[0] + obs_r_px,
+        obs_center_px[1] + obs_r_px,
+    ]
+    draw.ellipse(bbox_obs, fill=(255, 0, 0), outline=(255, 0, 0))
+
+    # ------------------------------------------------------------------
+    # 4. Draw agent (blue comet arrow)
+    # ------------------------------------------------------------------
+    # Support both 1‑D and batched tensors for *states* (but we only draw the
+    # first agent for visualisation, mirroring the original behaviour)
+    x = states[0][0] if states.ndim == 2 else states[0]
+    y = states[1][0] if states.ndim == 2 else states[1]
+    theta = states[2][0] if states.ndim == 2 else states[2]
+
+    base_px = world_to_px((x.item(), y.item()))
+    # comet dimensions scale with output size
+    comet_len = 17.5 * scale
+    comet_w = 10 * scale
+
+    draw_comet(
+        draw,
+        base_center=base_px,
+        angle_rad=theta.item(),
+        length=comet_len,
+        width=comet_w,
+        fill_color="blue",
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Down‑sample to final resolution (anti‑alias)
+    # ------------------------------------------------------------------
+    img_lo = img_hi.resize((base_w, base_h), Image.Resampling.LANCZOS)
+    img_array = np.array(img_lo)
+
+    # ------------------------------------------------------------------
+    # 6. Heat‑frame logic (unchanged)
+    # ------------------------------------------------------------------
+    hot = False
+    vehicle_temp = None
+    heat_opt = config.heat_mode
+
+    if config.multimodal:
+        hot = curr_traj_count >= config.heat_prop * config.num_trajs
+
+        if heat_opt == 0:
+            img_heat_array = heat_gen.get_heat_frame_v0(copy.deepcopy(img_array), heat=hot)
+        elif heat_opt == 1:
+            img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
+        elif heat_opt == 2:
+            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v2(
+                copy.deepcopy(img_array), heat=hot,
+                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+            )
+            img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
+        elif heat_opt == 3:
+            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v3(
+                np.array(img_array), heat=hot,
+                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+            )
+            img_array = heat_gen.get_rgb_v3(
+                copy.deepcopy(img_array), config, heat=hot,
+                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+            )
+        else:
+            raise ValueError("Invalid heat_mode")
+
+        img_array_combined = np.concatenate((img_array, img_heat_array), axis=-1)
+    else:
+        img_array_combined = img_array
+
+    return img_array_combined, hot, vehicle_temp
+
+def get_frame_eval_pil(states, config):
+    """Lightweight eval‑time frame generator.
+
+    Visual style is *identical* to :pyfunc:`get_frame` (arrow length, colours,
+    anti‑aliasing, obstacle style) but omits the multimodal heat branch and
+    therefore returns a plain ``(H,W,3)`` RGB numpy array.
+    """
+    # -------------------------------------------------------------- parameters
+    scale = getattr(config, "aa_scale", 4)
+    base_w, base_h = config.size
+    hi_w, hi_h = base_w * scale, base_h * scale
+
+    comet_len_px = 17.5 * scale  # fixed length to match training frames
+    arrow_width_px = 10 * scale
+
+    # -------------------------------------------------------------- helper
+    def world_to_px(coord):
+        x, y = coord
+        px = int((x - config.x_min) / (config.x_max - config.x_min) * hi_w)
+        py = int((config.y_max - y) / (config.y_max - config.y_min) * hi_h)
+        return px, py
+
+    # -------------------------------------------------------------- canvas
+    img_hi = Image.new("RGB", (hi_w, hi_h), "white")
+    draw = ImageDraw.Draw(img_hi)
+
+    # Obstacle
+    obs_center_px = world_to_px((config.obs_x, config.obs_y))
+    obs_r_px = (config.obs_r / (config.x_max - config.x_min)) * hi_w
+    bbox_obs = [
+        obs_center_px[0] - obs_r_px,
+        obs_center_px[1] - obs_r_px,
+        obs_center_px[0] + obs_r_px,
+        obs_center_px[1] + obs_r_px,
+    ]
+    draw.ellipse(bbox_obs, fill=(255, 0, 0), outline=(255, 0, 0))
+
+    # Agent
+    x = states[0][0] if states.ndim == 2 else states[0]
+    y = states[1][0] if states.ndim == 2 else states[1]
+    theta = states[2][0] if states.ndim == 2 else states[2]
+    base_px = world_to_px((x.item(), y.item()))
+    draw_comet(
+        draw,
+        base_center=base_px,
+        angle_rad=theta.item(),
+        length=comet_len_px,
+        width=arrow_width_px,
+        fill_color="blue",
+    )
+
+    # Anti‑alias
+    img_lo = img_hi.resize((base_w, base_h), Image.Resampling.LANCZOS)
+
+    return np.array(img_lo)
 
 def get_frame(states, config, heat_gen, curr_traj_count=0):
   dt = config.dt
@@ -329,7 +529,7 @@ def get_frame(states, config, heat_gen, curr_traj_count=0):
   
   plt.close(fig)
   return img_array_combined, hot, vehicle_temp
-
+  
 def get_frame_eval(states, config):
   dt = config.dt
   v = config.speed

@@ -13,18 +13,17 @@ defaults:
   obs_r: 0.5
 
   # offline data parameters
-  data_length: 100
-  num_trajs: 4000 ## 4000 in paper
-  num_train_trajs: 3800 ## 3800 in paper
+  # data_length: 100
+  # num_trajs: 4000 ## 4000 in paper
+  # num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/wm_demos128_multimodal_v3' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/cache_v3'
-  hj_cache_path: 'cache/hj/cache_v3'
-  ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
+  dataset_path: '/data/ken/new_skittles/consolidated.h5' # '128' should be the same as the size above
+  wm_cache_path: 'cache/wm/hw'
+  hj_cache_path: 'cache/hj/hw'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/dreamer_dubins_multimodal_v3'
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v3/rssm_ckpt.pt 
+  logdir: 'logs/hw
+  rssm_ckpt_path: logs/hw/rssm_ckpt.pt 
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -46,7 +45,7 @@ defaults:
   rssm_train_steps: 15001 ## 10000
   
   # Environment
-  task: 'dubins-wm'
+  task: 'dubins-wm' # shouldnt need this?
   envs: 1
   action_repeat: 1
   time_limit: 100
@@ -168,7 +167,7 @@ defaults:
   multimodal: True
   aug_rssm: True
   heat_mode: 3
-  heat_prop: 0.4 # 0.5
+  heat_prop: 0.0 # 0.5
   heat_threshold: 0.8
   fill_cache: True
   use_wandb: False
@@ -179,4 +178,3 @@ defaults:
 
   include_no_heat_vis: False
   obs_priv_heat: False # whether to use privileged heat in the observation state
-  use_pil: False

@@ -177,5 +177,5 @@ defaults:
   alpha_out: 20
   test: False
 
-  include_no_heat: True
+  include_no_heat_vis: True
   obs_priv_heat: True # whether to use privileged heat in the observation state

@@ -292,7 +292,7 @@ class Dreamer(nn.Module):
                     if pos.numel() > 0:
                         lx_loss += torch.relu(gamma - pos).mean()
                     if neg.numel() > 0:
-                        lx_loss += torch.relu(gamma + neg).mean()
+                        lx_loss += torch.relu(gamma + neg).mean() # weight this to scale lx_loss 
 
                     lx_loss *=  self._config.margin_head["loss_scale"]
                     if step < 3000:
@@ -431,25 +431,25 @@ class Dreamer(nn.Module):
                     rgb = gen.get_rgb_v2(img, self._config, heat=True)
                     heat, _ = gen.get_heat_frame_v2(rgb, heat=True, heat_value=heat_val)
                     no_heat = None
-                    if self._config.include_no_heat:
+                    if self._config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v2(rgb, heat=False, heat_value=heat_val)
                 elif self._config.heat_mode == 3:
                     rgb = gen.get_rgb_v3(img, self._config, heat=True, heat_value=heat_val)
                     heat, _ = gen.get_heat_frame_v3(rgb, heat=True, heat_value=heat_val)
                     no_heat = None
-                    if self._config.include_no_heat:
+                    if self._config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v3(rgb, heat=False, heat_value=heat_val)
                 else:
                     raise ValueError("Invalid heat_mode")
 
                 heat_imgs.append(heat)
                 rgb_imgs.append(rgb)
-                if self._config.include_no_heat:
+                if self._config.include_no_heat_vis:
                     no_heat_imgs.append(no_heat)
 
             all_heat_imgs[heat_val] = heat_imgs
             all_rgb_imgs[heat_val] = rgb_imgs
-            if self._config.include_no_heat:
+            if self._config.include_no_heat_vis:
                 all_no_heat_imgs[heat_val] = no_heat_imgs
 
         idxs = np.array(idxs)
@@ -499,7 +499,7 @@ class Dreamer(nn.Module):
             states = np.concatenate([cos, sin], axis=-1)
             
         data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
-        # if self._config.include_no_heat:
+        # if self._config.include_no_heat_vis:
             # data = {'obs_state': states, 'image': imgs, 'heat': heat, 'no_heat': no_heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
             
         data = self._wm.preprocess(data)
@@ -518,8 +518,8 @@ class Dreamer(nn.Module):
     def get_eval_plot(self, heat_values=[0.2, 0.4, 0.6, 0.8]):
         self.eval()
         
-        titles = ['w/ Heat', 'w/o Heat'] if self._config.include_no_heat else ['w/ Heat']
-        num_modes = 2 if self._config.include_no_heat else 1
+        titles = ['w/ Heat', 'w/o Heat'] if self._config.include_no_heat_vis else ['w/ Heat']
+        num_modes = 2 if self._config.include_no_heat_vis else 1
         num_heat = len(heat_values)
 
         fig, axes = plt.subplots(
@@ -545,8 +545,8 @@ class Dreamer(nn.Module):
             # Get both modes: cold (no heat) and hot (heat)
             g_x_hot, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=True)
             g_x_list = [np.array(g_x_hot)]
-            if self._config.include_no_heat:
-                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs, self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=False)
+            if self._config.include_no_heat_vis:
+                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=False)
                 g_x_list = [np.array(g_x_hot), np.array(g_x_cold)]
 
             vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]

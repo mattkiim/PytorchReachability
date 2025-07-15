@@ -377,21 +377,21 @@ def make_cache(config, thetas, heat_values):
                 # TODO: when i make the images, i need to get them at specific heat_values. theta is observable, but we are not doing that
                 if config.heat_mode == 0:
                     heat = gen.get_heat_frame_v0(img, heat=True)
-                    if config.include_no_heat:
+                    if config.include_no_heat_vis:
                         no_heat = gen.get_heat_frame_v0(img, heat=False)
                 elif config.heat_mode == 1:
                     heat = gen.get_heat_frame_v1(img, heat=True)
-                    if config.include_no_heat:
+                    if config.include_no_heat_vis:
                         no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif config.heat_mode == 2:
                     img = gen.get_rgb_v2(img, config, heat=True)
                     heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=heat_value)
-                    if config.include_no_heat:
+                    if config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v2(img, heat=False, heat_value=heat_value)
                 elif config.heat_mode == 3:
                     img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
                     heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=heat_value)
-                    if config.include_no_heat:
+                    if config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value) # BUG: heat=False seems to remove vehicle
                 else:
                     raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
@@ -400,7 +400,7 @@ def make_cache(config, thetas, heat_values):
                 idxs.append(idx)
                 imgs_prev.append(img)
                 heat_imgs.append(heat)
-                if config.include_no_heat:
+                if config.include_no_heat_vis:
                     no_heat_imgs.append(no_heat)
                 thetas_prev.append(theta_prev)
                 heat_values_prev.append(heat_value)
@@ -647,7 +647,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     from matplotlib import colors as mcolors
 
     theta_heat_pairs = list(product(thetas, heat_values))
-    nrows = 2 if config.include_no_heat else 1
+    nrows = 2 if config.include_no_heat_vis else 1
     ncols = len(theta_heat_pairs)
     figsize = (3 * ncols, 6)
 
@@ -675,7 +675,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     X, Y = np.meshgrid(x_lin, y_lin, indexing="ij")
 
     plot_list = [(True, "heat")]
-    if config.include_no_heat:
+    if config.include_no_heat_vis:
         plot_list.append((False, "no_heat"))
 
     # iterate over each (theta, heat) column
@@ -856,7 +856,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     ]
     for ax_arr, base_lbl in labels:
         ax_arr[0, 0].set_ylabel(f"{base_lbl} (HEAT)")
-        if config.include_no_heat:
+        if config.include_no_heat_vis:
             ax_arr[1, 0].set_ylabel(f"{base_lbl} (NO HEAT)")
 
     # figure‑level titles & layout

@@ -203,7 +203,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     
     num_train = config.num_train_trajs
         
-    # if not config.include_no_heat:
+    # if not config.include_no_heat_vis:
     #     # take the last half of demos
     #     demos = demos[len(demos) // 2:]
     #     num_train = config.num_train_trajs // 2
@@ -260,7 +260,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             if config.heat_mode < 2:
                 heat_failure = heat
             elif config.heat_mode == 2 or config.heat_mode == 3:
-                heat_failure = heat > config.heat_threshold 
+                heat_failure = heat > config.heat_threshold - 1e-6
             # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
