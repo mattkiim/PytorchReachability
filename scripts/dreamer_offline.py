@@ -35,7 +35,7 @@ from io import BytesIO
 from PIL import Image
 
 to_np = lambda x: x.detach().cpu().numpy()
-from generate_data_traj_cont import get_frame_eval, HeatFrameGenerator
+from generate_data_traj_cont import get_frame_eval, get_frame_eval_pil, HeatFrameGenerator
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
@@ -405,7 +405,10 @@ class Dreamer(nn.Module):
             labels.append(int(is_unsafe))
             idxs.append(idx)
 
-            img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
+            if self._config.use_pil:
+                img = get_frame_eval_pil(torch.tensor([x, y, theta]), self._config)
+            else:
+                img = get_frame_eval(torch.tensor([x, y, theta]), self._config)
             imgs.append(img)
 
             it.iternext()

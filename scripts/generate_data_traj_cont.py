@@ -157,6 +157,7 @@ class HeatFrameGenerator:
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_VEHICLE_TEMP)
+            temp = np.clip(temp, 0, DEFAULT_VEHICLE_TEMP)
             heat_frame[inside_mask] = temp
             heat_frame[outside_mask] = temp
           
@@ -169,7 +170,7 @@ class HeatFrameGenerator:
     
     def heat_to_temp(self, heat_value, def_temp, alpha_in=3):
       temp = -def_temp * (heat_value - 1)
-      # print(def_temp, heat, temp)
+      # print(def_temp, heat_value, temp)
       return temp
     
     def get_rgb_v2(self, img_array, config, heat=True):
@@ -253,8 +254,10 @@ class HeatFrameGenerator:
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
+            temp = np.clip(temp, MIN_RGB_VEHICLE_TEMP, DEFAULT_RGB_VEHICLE_TEMP)
+            
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
-            # print('here', temp_norm, temp)
+            print(temp, temp_norm, heat_value)
             decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
             light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
             inside_mask = np.squeeze(inside_mask, axis=-1)
@@ -619,7 +622,10 @@ def gen_one_traj_img(config, curr_traj_count=0):
       
     acs.append(ac)
     
-    img_array, hot, vehicle_temp = get_frame(states, config, heat_gen, curr_traj_count=curr_traj_count)
+    if config.use_pil:
+      img_array, hot, vehicle_temp = get_frame_pil(states, config, heat_gen, curr_traj_count=curr_traj_count)
+    else:
+      img_array, hot, vehicle_temp = get_frame(states, config, heat_gen, curr_traj_count=curr_traj_count)
     norm_temp = 1. - vehicle_temp / DEFAULT_VEHICLE_TEMP
     
     state_obs.append(states[2].numpy())
