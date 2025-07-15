@@ -171,6 +171,7 @@ class WorldModel(nn.Module):
         # image (batch_size, batch_length, h, w, ch)
         # reward (batch_size, batch_length)
         # discount (batch_size, batch_length)
+        # print(f"[models/WorldModel/_train] data: {data}"); quit()
         data = self.preprocess(data)
 
         with tools.RequiresGrad(self):

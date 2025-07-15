@@ -30,7 +30,8 @@ class Dubins_WM_Env(gym.Env):
         self.low = np.array([
             -1.5, -1.5, -np.pi
         ])
-        self.device = 'cuda:1'
+        self.device = 'cuda:0'
+        self.device = config.device if hasattr(config, 'device') else self.device
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1,1,544,), dtype=np.float32)
         image_size = config.size[0] #128
         img_obs_space = gym.spaces.Box(

@@ -252,8 +252,28 @@ class HeatFrameGenerator:
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
-            rgb_out[..., 2:3][inside_mask] = temp
-            rgb_out[..., 2:3][outside_mask] = temp
+            temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+            decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+            
+            # rgb_out[..., 2:3][inside_mask] = temp
+            # rgb_out[..., 2:3][outside_mask] = temp
+            
+        else:
+            temp = self.vehicle_temp_rgb
+            decay_factor = 0.4 # no decay when no heat
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+            
+            # rgb_out[..., 2:3][inside_mask] = temp
+            # rgb_out[..., 2:3][outside_mask] = temp
 
         return rgb_out
       
@@ -388,8 +408,6 @@ def gen_one_traj_img(config, curr_traj_count=0):
     states_next[2] = states[2] + dt*ac
 
     # the data is (o_t, a_t), don't observe o_t+1 yet
-    state_obs.append(states[2].numpy()) # get to observe theta
-    state_gt.append(states.numpy()) # gt state for debugging
     if t == config.data_length-1:
       dones.append(1)
     elif torch.abs(states[0]) > config.x_max-config.buffer or torch.abs(states[1]) > config.y_max-config.buffer: 
@@ -401,12 +419,18 @@ def gen_one_traj_img(config, curr_traj_count=0):
     acs.append(ac)
     
     img_array, hot, vehicle_temp = get_frame(states, config, heat_gen, curr_traj_count=curr_traj_count)
+    norm_temp = 1. - vehicle_temp / DEFAULT_VEHICLE_TEMP
+    
+    state_obs.append(states[2].numpy())
+    # print(state_obs); quit()
+    
+    state_gt.append(states.numpy()) # gt state for debugging
     if config.multimodal: 
       img_obs.append(img_array[..., :3]) # TODO: turn into dict and grab
       # print(img_array[..., -1:].mean()); quit()
       heat_obs.append(img_array[..., -1:])
       # print(vehicle_temp / DEFAULT_VEHICLE_TEMP)
-      heat_gt.append(1. - vehicle_temp / DEFAULT_VEHICLE_TEMP) # TODO: store this in a variable
+      heat_gt.append(norm_temp) # TODO: store this in a variable
     else: 
       img_obs.append(img_array)
       heat_obs.append(img_array[..., 0] * 0)
