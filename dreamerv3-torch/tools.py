@@ -237,7 +237,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 ]
                 transition["state"] = curr_obs_state_vec
             
-            transition["privileged_state"] = 1 - traj['obs']['priv_state'][t]
+            transition["privileged_state"] = traj['obs']['priv_state'][t]
             
             if config.obs_priv_heat:
                 transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
@@ -255,12 +255,12 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             vis_failure = distance < config.obs_r
 
             # heat-based check
-            heat = 1 - traj['obs']['priv_heat'][t]
+            heat = traj['obs']['priv_heat'][t]
             
             if config.heat_mode < 2:
                 heat_failure = heat
             elif config.heat_mode == 2 or config.heat_mode == 3:
-                heat_failure = heat < 1 - (config.heat_threshold - 1e-6)
+                heat_failure = heat > config.heat_threshold - 1e-6
             # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
