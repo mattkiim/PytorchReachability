@@ -55,9 +55,9 @@ defaults:
   reward_EMA: True
 
   # Model
-  dyn_hidden: 512
-  dyn_deter: 512
-  dyn_stoch: 32
+  dyn_hidden: 256
+  dyn_deter: 256
+  dyn_stoch: 16
   dyn_discrete: 0 # 0 for continuous latent
   dyn_rec_depth: 1
   dyn_mean_act: 'none'
@@ -169,7 +169,7 @@ defaults:
   aug_rssm: True
   heat_mode: 3
   heat_prop: 0.0 # 0.5
-  heat_threshold: 0.7
+  heat_threshold: 0.75
   fill_cache: True
   use_wandb: False
 
