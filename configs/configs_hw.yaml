@@ -42,7 +42,7 @@ defaults:
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 15001 ## 10000
+  rssm_train_steps: 6001 ## 10000
   
   # Environment
   task: 'dubins-wm' # shouldnt need this?
