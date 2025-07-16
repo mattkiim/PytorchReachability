@@ -19,7 +19,7 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
-DEFAULT_VEHICLE_TEMP = 255 / 1.1
+DEFAULT_VEHICLE_TEMP = 255 / 1.5
 MIN_VEHICLE_TEMP = 0. # TODO: implement this
 
 DEFAULT_RGB_VEHICLE_TEMP = 255

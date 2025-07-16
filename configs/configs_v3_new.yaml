@@ -173,8 +173,8 @@ defaults:
   fill_cache: True
   use_wandb: False
 
-  alpha_in: 12
-  alpha_out: 12
+  alpha_in: 8
+  alpha_out: 8
   test: False
 
   include_no_heat_vis: False
