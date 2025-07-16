@@ -16,7 +16,7 @@ defaults:
   data_length: 100
   num_trajs: 302 ## 4000 in paper
   num_train_trajs: 272 ## 3800 in paper
-  size: [128, 128]
+  size: [224, 224]
   dataset_path: '/data/ken/new_skittles/consolidated.h5' # '128' should be the same as the size above
   wm_cache_path: 'cache/wm/hw'
   hj_cache_path: 'cache/hj/hw'

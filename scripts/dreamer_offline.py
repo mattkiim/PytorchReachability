@@ -441,11 +441,11 @@ def main(config):
 
     if config.obs_priv_heat:
         obs_observation_space = gym.spaces.Box(
-            low=-1, high=1, shape=(3,), dtype=np.float32
+            low=-1, high=1, shape=(9,), dtype=np.float32
         )
     else:
         obs_observation_space = gym.spaces.Box(
-            low=-1, high=1, shape=(2,), dtype=np.float32
+            low=-1, high=1, shape=(8,), dtype=np.float32
         )
     
     if config.aug_rssm:
