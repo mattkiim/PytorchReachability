@@ -199,7 +199,8 @@ def save_checkpoint(
 
     return best_score
 
-def load_h5_to_expert_eps(h5_path, expert_eps, max_trajs=None):
+def load_h5_to_expert_eps(h5_path, max_trajs=None):
+    expert_eps = {}
     with h5py.File(h5_path, 'r') as f:
         traj_keys = sorted(f.keys())
         if max_trajs:
@@ -225,12 +226,13 @@ def load_h5_to_expert_eps(h5_path, expert_eps, max_trajs=None):
             episode['is_first'][0] = True  # mark episode start
 
             expert_eps[traj_key] = episode
+    return expert_eps
 
 def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     dataset_path = config.dataset_path
     
-    with open(dataset_path, 'rb') as f:
-        demos = pickle.load(f)
+    demos = load_h5_to_expert_eps(dataset_path)
+    quit()
     
     num_train = config.num_train_trajs
         
