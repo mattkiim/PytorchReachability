@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import pickle
+import cv2
 
 import warnings
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -429,7 +430,6 @@ def make_cache(config, thetas, heat_values):
         pickle.dump(cache, f)
     return cache
 
-
 def load_cache(config):
     cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
 
@@ -477,11 +477,6 @@ def get_latent(wm, thetas, heat_values, imgs, heat_imgs, no_heat_imgs, heat_bool
       else:
         data = {'obs_state': states[i*bs:(i+1)*bs], 'image': imgs[i*bs:(i+1)*bs], 'heat': heat_imgs[i*bs:(i+1)*bs], 'action': dummy_acs[i*bs:(i+1)*bs], 'is_first': firsts[i*bs:(i+1)*bs], 'is_terminal': lasts[i*bs:(i+1)*bs]}
       
-    #   print("[ddpg-wm/get_latent] input batch shapes:")
-    #   for k, v in data.items():
-    #     print(f"  {k}: {np.shape(v)}")
-    #   quit()
-      
       data = wm.preprocess(data)
       embeds = wm.encoder(data)
       if i == 0:
@@ -497,13 +492,6 @@ def get_latent(wm, thetas, heat_values, imgs, heat_imgs, no_heat_imgs, heat_bool
     
     feat = wm.dynamics.get_feat(post).detach()
     lz = torch.tanh(wm.heads["margin"](feat))
-    
-    # lz_image = lz.reshape(41, 41).T
-
-    # plt.imshow(lz_image, origin="lower", cmap="seismic", vmin=-1, vmax=1)
-    # plt.colorbar(label="lz (safety margin)")
-    # plt.title("Safety Margin Output (lz)")
-    # plt.savefig("lz_margin_plot.png", dpi=300); quit() # TODO: visualize this tomorrow
     
     return feat.squeeze().cpu().numpy(), lz.squeeze().detach().cpu().numpy(), post
 
@@ -586,9 +574,10 @@ def rollout_dubins(
 
                 heat_vals = torch.where(
                     inside_obs,
-                    heat_vals + config.alpha_in  / (255 / 1.1),
+                    heat_vals + config.alpha_in  / (255 / 1.1), # TODO: add vehicle_heat to config
                     heat_vals - config.alpha_out / (255 / 1.1)
                 )
+                heat_vals = torch.clamp(heat_vals, min=0.0, max=1.0)
 
                 # failure if heat ≥ threshold (equality included)
                 failure |= heat_vals >= (config.heat_threshold - EPS)
@@ -627,19 +616,118 @@ def rollout_dubins(
             np.array(failures,     dtype=bool),
             np.array(fp_trajs,     dtype=object),
             np.array(fn_trajs,     dtype=object))
-    
-def single_rollout(initial_condition):
-    # TODO: implement
+
+@torch.no_grad()    
+def single_rollout(initial_conditions, config, T=100, target=None):
     """
-    1. take the initial condition
-    2. rollout trajectory using safe policy
-    3. convert real states to RGB + Heat (see if it is easy to reference generate_data_traj_cont.py)
-    4. visualize both
-    5. save the trajectory as a video
-    6. return and call in get_eval_plot
+    1. Take the initial condition, generate RGB + heat image.
+    2. Roll out trajectory using the Dreamer policy.
+    3. Convert real states to RGB + Heat.
+    4. Save trajectory as video (optional).
     """
-    
-    pass
+    gen = HeatFrameGenerator(config)
+    trajectories_rgb_obs = []
+    trajectories_heat_obs = []
+
+    for initial_condition in initial_conditions:
+        state = torch.tensor(initial_condition[:3])  # (x, y, theta)
+        heat_value = initial_condition[-1]
+        vehicle_heat = heat_value
+        traj_rgb = []
+        traj_heat = []
+
+        for t in range(T):
+            # Generate RGB and heat images from current state
+            img = get_frame_eval(state, config)
+            gen._compute_geometry(img.shape)
+
+            if config.heat_mode == 3:
+                img = gen.get_rgb_v3(img, config, heat=True, heat_value=vehicle_heat)
+                heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=vehicle_heat)
+            elif config.heat_mode == 2:
+                img = gen.get_rgb_v2(img, config, heat=True)
+                heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=vehicle_heat)
+            elif config.heat_mode == 1:
+                heat = gen.get_heat_frame_v1(img, heat=True)
+            elif config.heat_mode == 0:
+                heat = gen.get_heat_frame_v0(img, heat=True)
+            else:
+                raise NotImplementedError("Unsupported heat_mode")
+
+            # Store images
+            img = cv2.putText(
+                img,
+                f"Heat: {vehicle_heat:.2f}",
+                org=(5, 15),  # (x, y) position
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                fontScale=0.4,
+                color=(255, 0, 0),
+                thickness=1,
+                lineType=cv2.LINE_AA
+            )
+            traj_rgb.append(img)
+            traj_heat.append(heat)
+
+            # Convert to Dreamer latent
+            feat, lz, post = get_latent(
+                wm, [state[2]], vehicle_heat, [img], [heat], no_heat_imgs=None, heat_bool=True
+            )
+
+            # Get latent feature
+            feat_tensor = torch.tensor(feat, dtype=torch.float32, device=config.device)
+            dreamer_action = policy.actor(feat_tensor.unsqueeze(0))[0][0]  # shape: (1,1)
+
+            if target is not None:
+                # Current position and orientation
+                x, y, theta = state[0].item(), state[1].item(), state[2].item()
+                tx, ty = target
+
+                # Compute nominal heading correction
+                desired_heading = np.arctan2(ty - y, tx - x)
+                heading_error = (desired_heading - theta + np.pi) % (2 * np.pi) - np.pi
+
+                # Nominal action to correct heading
+                nominal_turn = heading_error / config.dt
+                nominal_turn = np.clip(nominal_turn, -config.turnRate, config.turnRate)
+                nominal_action = torch.tensor([nominal_turn], dtype=torch.float32, device=config.device)
+
+                # Evaluate safety of nominal action
+                value_nominal = policy.critic(feat_tensor.unsqueeze(0), nominal_action.unsqueeze(0))[0]
+                is_safe = value_nominal > 0
+
+                action = nominal_action if is_safe else dreamer_action
+            else:
+                action = dreamer_action
+
+            # Simulate Dubins dynamics
+            speed = config.speed
+            dt = config.dt
+            turn_rate = action[0]  # assuming scalar turning
+            theta = state[2]
+            dx = speed * torch.cos(theta) * dt
+            dy = speed * torch.sin(theta) * dt
+            dtheta = turn_rate * dt
+
+            state[0] += dx
+            state[1] += dy
+            state[2] = (theta + dtheta + np.pi) % (2 * np.pi) - np.pi
+
+            # Heat update (like rollout_dubins)
+            dist = ((state[0] - config.obs_x)**2 + (state[1] - config.obs_y)**2).sqrt()
+            inside_obs = dist < config.obs_r
+
+            if inside_obs:
+                vehicle_heat += config.alpha_in / (255 / 1.1)
+            else:
+                vehicle_heat -= config.alpha_out / (255 / 1.1)
+            # vehicle_heat = torch.tensor(vehicle_heat, dtype=torch.float32)
+            vehicle_heat = np.clip(vehicle_heat, 0, 1)
+
+        trajectories_rgb_obs.append(traj_rgb)
+        trajectories_heat_obs.append(traj_heat)
+
+    return trajectories_rgb_obs, trajectories_heat_obs
+
 
 def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
     from itertools import product
@@ -726,7 +814,7 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
             )
 
             ax = axes_rollout[row, col]
-            # trajectory rollouts
+            # trajectory rollout plots
             for (xs, ys), is_failure in zip(trajectories, failures):
                 # build one RGBA array whose alpha increases with time
                 base_rgb   = mcolors.to_rgba('red' if is_failure else 'green')
@@ -837,12 +925,23 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
                             bbox=dict(facecolor="white", alpha=0.7, edgecolor="gray")
                         )
                         
-
             # obstacle
             for ax_group in [axes_lz, axes_lz_bin, axes_v, axes_v_bin, axes_combined, axes_combined_bin]:
                 ax = ax_group[row, col]
                 ax.add_patch(patches.Circle((config.obs_x, config.obs_y), config.obs_r, linewidth=1, edgecolor="red", facecolor="none", linestyle="--"))
                 ax.axis("off")
+                
+            # ------------------------------------------------------------------ #
+            initial_state = np.array([-0.9, 0., 0.])
+            # print(initial_state); quit()
+            traj_rgb, traj_heat = single_rollout([initial_state], config, T=rollout_T, target=[0.9, 0.])
+
+            import imageio
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_vid:
+                imageio.mimsave(temp_vid.name, traj_rgb[0], fps=8)
+                temp_vid.flush()
+                traj_vid_path = temp_vid.name
 
     # y‑labels on leftmost column
     labels = [
@@ -880,7 +979,8 @@ def get_eval_plot(cache, thetas, heat_values, rollout_T=100, boundary_eps=1e-3):
         fig_v_bin,
         fig_combined,
         fig_combined_bin,
-        fig_rollout
+        fig_rollout,
+        traj_vid_path
     )
 
 
@@ -902,94 +1002,70 @@ else:
 
 logger = None
 warmup = 1
-plot1, plot2, plot3, plot4, plot5, plot6, plot7 = get_eval_plot(cache, thetas, heat_values)
+plot1, plot2, plot3, plot4, plot5, plot6, plot7, traj_vid_path = get_eval_plot(cache, thetas, heat_values)
 
-eval = False
-if eval:
-    print(f"[EVAL] Loading trained policy from: {log_path}/epoch_id_{epoch}/policy.pth")
-    path = "/home/matthew/PytorchReachability/logs/dreamer_dubins_multimodal_v3plus/PyHJ/0627/232838/PyHJ/dubins-wm/wm_actor_activation_ReLU_critic_activation_ReLU_game_gd_steps_1_tau_0.005_training_num_1_buffer_size_40000_c_net_128_3_a1_128_3_gamma_0.9999/noise_0.1_actor_lr_0.0001_critic_lr_0.001_batch_512_step_per_epoch_40000_kwargs_{}_seed_0/epoch_id_16/policy.pth"
-    policy.load_state_dict(torch.load(f"{path}", weights_only=True))
+for iter in range(warmup+args.total_episodes):
+    if iter  < warmup:
+        policy._gamma = 0 # for warming up the value fn
+        policy.warmup = True
+    else:
+        policy._gamma = config.gamma_pyhj
+        policy.warmup = False
 
-    # Evaluate on test_envs
-    print("[EVAL] Running evaluation episodes...")
-    test_result = test_collector.collect(n_episode=args.test_num, render=args.render_eval if hasattr(args, 'render_eval') else 0)
+    if args.continue_training_epoch is not None:
+        print("epoch: {}, remaining epochs: {}".format(epoch//args.epoch, args.total_episodes - iter))
+    else:
+        print("epoch: {}, remaining epochs: {}".format(iter, args.total_episodes - iter))
+    epoch = epoch + args.epoch
+    print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
+    if args.total_episodes > 1:
+        writer = SummaryWriter(log_path+"/epoch_id_{}".format(epoch)) #filename_suffix="_"+timestr+"_epoch_id_{}".format(epoch))
+    else:
+        if not os.path.exists(log_path+"/total_epochs_{}".format(epoch)):
+            print("Just created the log directory!")
+            print("log_path: ", log_path+"/total_epochs_{}".format(epoch))
+            os.makedirs(log_path+"/total_epochs_{}".format(epoch))
+        writer = SummaryWriter(log_path+"/total_epochs_{}".format(epoch)) #filename_suffix="_"+timestr+"_epoch_id_{}".format(epoch))
+    if logger is None:
+        logger = WandbLogger()
+        logger.load(writer)
+    logger = TensorboardLogger(writer)
+    
+    # import pdb; pdb.set_trace()
+    result = offpolicy_trainer(
+    policy,
+    train_collector,
+    test_collector,
+    args.epoch,
+    args.step_per_epoch,
+    args.step_per_collect,
+    args.test_num,
+    args.batch_size_pyhj,
+    update_per_step=args.update_per_step,
+    stop_fn=stop_fn,
+    save_best_fn=save_best_fn,
+    logger=logger
+    )
+    
+    save_best_fn(policy, epoch=epoch)
+    plot1, plot2, plot3, plot4, plot5, plot6, plot7, traj_vid_path = get_eval_plot(cache, thetas, heat_values)
+    log_dict = {
+        "eval/lz_continuous": wandb.Image(plot1),
+        "eval/lz_binary": wandb.Image(plot2),
+        "eval/v_continuous": wandb.Image(plot3),
+        "eval/v_binary": wandb.Image(plot4),
+        "eval/min_v_l_continuous": wandb.Image(plot5),
+        "eval/min_v_l_binary": wandb.Image(plot6),
+        "eval/rollout_trajectories": wandb.Image(plot7),
+    }
+    if traj_vid_path and os.path.exists(traj_vid_path):
+        log_dict["eval/rollout_video"] = wandb.Video(traj_vid_path, fps=8, format="mp4")
 
-    avg_reward = test_result["rews"].mean()
-    avg_length = test_result["lens"].mean()
-    print(f"[EVAL] Average reward: {avg_reward:.2f} | Average episode length: {avg_length:.2f}")
-
-    # Generate and show evaluation plots
-    print("[EVAL] Generating evaluation plots...")
-    plot1, plot2 = get_eval_plot(cache, thetas, heat_values)
-
-    # Save plots locally
-    plot_dir = os.path.join(log_path, f"epoch_id_{epoch}", "eval_plots")
-    os.makedirs(plot_dir, exist_ok=True)
-    plot1_path = os.path.join(plot_dir, "binary_reach_avoid_plot.png")
-    plot2_path = os.path.join(plot_dir, "continuous_minVg_plot.png")
-    plot1.savefig(plot1_path)
-    plot2.savefig(plot2_path)
-    print(f"[EVAL] Plots saved to {plot_dir}")
-
-    print("[EVAL] Evaluation complete.")
-
-else:
-    for iter in range(warmup+args.total_episodes):
-        if iter  < warmup:
-            policy._gamma = 0 # for warming up the value fn
-            policy.warmup = True
-        else:
-            policy._gamma = config.gamma_pyhj
-            policy.warmup = False
-
-        if args.continue_training_epoch is not None:
-            print("epoch: {}, remaining epochs: {}".format(epoch//args.epoch, args.total_episodes - iter))
-        else:
-            print("epoch: {}, remaining epochs: {}".format(iter, args.total_episodes - iter))
-        epoch = epoch + args.epoch
-        print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
-        if args.total_episodes > 1:
-            writer = SummaryWriter(log_path+"/epoch_id_{}".format(epoch)) #filename_suffix="_"+timestr+"_epoch_id_{}".format(epoch))
-        else:
-            if not os.path.exists(log_path+"/total_epochs_{}".format(epoch)):
-                print("Just created the log directory!")
-                print("log_path: ", log_path+"/total_epochs_{}".format(epoch))
-                os.makedirs(log_path+"/total_epochs_{}".format(epoch))
-            writer = SummaryWriter(log_path+"/total_epochs_{}".format(epoch)) #filename_suffix="_"+timestr+"_epoch_id_{}".format(epoch))
-        if logger is None:
-            logger = WandbLogger()
-            logger.load(writer)
-        logger = TensorboardLogger(writer)
-        
-        # import pdb; pdb.set_trace()
-        result = offpolicy_trainer(
-        policy,
-        train_collector,
-        test_collector,
-        args.epoch,
-        args.step_per_epoch,
-        args.step_per_collect,
-        args.test_num,
-        args.batch_size_pyhj,
-        update_per_step=args.update_per_step,
-        stop_fn=stop_fn,
-        save_best_fn=save_best_fn,
-        logger=logger
-        )
-        
-        save_best_fn(policy, epoch=epoch)
-        plot1, plot2, plot3, plot4, plot5, plot6, plot7 = get_eval_plot(cache, thetas, heat_values)
-        wandb.log({
-            "eval/lz_continuous": wandb.Image(plot1),
-            "eval/lz_binary": wandb.Image(plot2),
-            "eval/v_continuous": wandb.Image(plot3),
-            "eval/v_binary": wandb.Image(plot4),
-            "eval/min_v_l_continuous": wandb.Image(plot5),
-            "eval/min_v_l_binary": wandb.Image(plot6),
-            "eval/rollout_trajectories": wandb.Image(plot7),
-        })
-
-
-        policy.critic_scheduler.step()
-        policy.actor_scheduler.step()
+    wandb.log(log_dict)
+    
+    if traj_vid_path and os.path.exists(traj_vid_path):
+        os.remove(traj_vid_path)
+    
+    policy.critic_scheduler.step()
+    policy.actor_scheduler.step()
 

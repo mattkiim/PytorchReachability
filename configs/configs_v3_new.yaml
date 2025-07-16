@@ -180,3 +180,4 @@ defaults:
   include_no_heat_vis: False
   obs_priv_heat: False # whether to use privileged heat in the observation state
   use_pil: True
+  include_outline: True

@@ -19,7 +19,7 @@ dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreame
 sys.path.append(dreamer_dir)
 import tools
 
-DEFAULT_VEHICLE_TEMP = 255 / 1.5
+DEFAULT_VEHICLE_TEMP = 255 / 1.1
 MIN_VEHICLE_TEMP = 0. # TODO: implement this
 
 DEFAULT_RGB_VEHICLE_TEMP = 255
@@ -166,13 +166,14 @@ class HeatFrameGenerator:
           vehicle_mask = (vehicle == 0)
           heat_frame[vehicle_mask] = DEFAULT_VEHICLE_TEMP
 
-      # black outline
-      from scipy.ndimage import binary_erosion
-      vehicle_mask_binary = np.squeeze(vehicle_mask.astype(bool), -1)
-      outline = vehicle_mask_binary ^ binary_erosion(vehicle_mask_binary)
-      heat_frame = np.squeeze(heat_frame, -1)
-      heat_frame[outline] = 0
-      heat_frame = heat_frame[..., None]  # Restore original shape (H, W, 1)
+      if config.include_outline:
+        # black outline
+        from scipy.ndimage import binary_erosion
+        vehicle_mask_binary = np.squeeze(vehicle_mask.astype(bool), -1)
+        outline = vehicle_mask_binary ^ binary_erosion(vehicle_mask_binary)
+        heat_frame = np.squeeze(heat_frame, -1)
+        heat_frame[outline] = 0
+        heat_frame = heat_frame[..., None]  # Restore original shape (H, W, 1)
         
       return heat_frame, self.vehicle_temp
     
@@ -265,7 +266,7 @@ class HeatFrameGenerator:
             temp = np.clip(temp, MIN_RGB_VEHICLE_TEMP, DEFAULT_RGB_VEHICLE_TEMP)
             
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
-            print(temp, temp_norm, heat_value)
+            # print(temp, temp_norm, heat_value)
             decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
             light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
             inside_mask = np.squeeze(inside_mask, axis=-1)
@@ -288,12 +289,12 @@ class HeatFrameGenerator:
             # rgb_out[..., 2:3][inside_mask] = temp
             # rgb_out[..., 2:3][outside_mask] = temp
             
-        
-        # black outline
-        from scipy.ndimage import binary_erosion
-        mask = np.squeeze(vehicle_mask, -1)
-        outline = mask ^ binary_erosion(mask)
-        rgb_out[outline] = (0, 0, 0)
+        if config.include_outline:
+          # black outline
+          from scipy.ndimage import binary_erosion
+          mask = np.squeeze(vehicle_mask, -1)
+          outline = mask ^ binary_erosion(mask)
+          rgb_out[outline] = (0, 0, 0)
 
         return np.clip(rgb_out, 0, 255).astype(img_array.dtype)
 
