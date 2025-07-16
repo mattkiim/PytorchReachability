@@ -255,7 +255,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             vis_failure = distance < config.obs_r
 
             # heat-based check
-            heat = traj['obs']['priv_heat'][t]
+            heat = 1 - traj['obs']['priv_heat'][t]
             
             if config.heat_mode < 2:
                 heat_failure = heat
