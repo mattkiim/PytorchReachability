@@ -67,9 +67,9 @@ defaults:
   act: 'SiLU'
   norm: True
   encoder:
-    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, symlog_inputs: True} # TODO: change heat_key name eventually. need to dig into expert_dataset generation in tools 
+    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 7, mlp_layers: 5, mlp_units: 1024, symlog_inputs: True} # TODO: change heat_key name eventually. need to dig into expert_dataset generation in tools 
   decoder:
-    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 4, mlp_layers: 5, mlp_units: 1024, cnn_sigmoid: False, image_dist: mse, vector_dist: symlog_mse, outscale: 1.0}
+    {mlp_keys: 'obs_state', cnn_keys: 'image', heat_keys: 'heat', act: 'SiLU', norm: True, cnn_depth: 32, kernel_size: 4, minres: 7, mlp_layers: 5, mlp_units: 1024, cnn_sigmoid: False, image_dist: mse, vector_dist: symlog_mse, outscale: 1.0}
   actor:
     {layers: 2, dist: 'normal', entropy: 3e-4, unimix_ratio: 0.01, std: 'learned', min_std: 0.1, max_std: 1.0, temp: 0.1, lr: 3e-5, eps: 1e-5, grad_clip: 100.0, outscale: 1.0}
   critic:

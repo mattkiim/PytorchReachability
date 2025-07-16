@@ -199,8 +199,31 @@ def save_checkpoint(
 
     return best_score
 
-def load_h5_to_expert_eps(h5_path, max_trajs=None):
+def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1e-8):
     demos = []
+    action_mins = None
+    action_maxs = None
+
+    # First pass to get min/max if normalization is requested
+    if normalize_actions:
+        with h5py.File(h5_path, 'r') as f:
+            traj_keys = sorted(f.keys())
+            if max_trajs:
+                traj_keys = traj_keys[:max_trajs]
+
+            for traj_key in traj_keys:
+                traj_group = f[traj_key]
+                if 'actions' not in traj_group:
+                    continue
+                actions = traj_group['actions'][:]
+                if action_mins is None:
+                    action_mins = actions.min(axis=0)
+                    action_maxs = actions.max(axis=0)
+                else:
+                    action_mins = np.minimum(action_mins, actions.min(axis=0))
+                    action_maxs = np.maximum(action_maxs, actions.max(axis=0))
+
+    # Second pass to load data and normalize
     with h5py.File(h5_path, 'r') as f:
         traj_keys = sorted(f.keys())
         if max_trajs:
@@ -211,24 +234,33 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None):
             if 'camera_0' not in traj_group or 'actions' not in traj_group:
                 continue
 
+            actions = traj_group['actions'][:]
+            if normalize_actions:
+                actions = 2.0 * (actions - action_mins) / (action_maxs - action_mins + eps) - 1.0
+
             traj = {
                 'obs': {
                     'image': traj_group['camera_0'][:],
                     'state': traj_group['states'][:],
-                    'priv_state': traj_group['states'][:],  # use same if only 1
+                    'priv_state': traj_group['states'][:],
                     'priv_heat': traj_group['labels'][:] if 'labels' in traj_group else np.zeros(len(traj_group['camera_0']), dtype=np.float32)
                 },
-                'actions': traj_group['actions'][:],
-                'dones': np.zeros(len(traj_group['actions']), dtype=bool)  # you can replace if real dones are available
+                'actions': actions.astype(np.float32),
+                'dones': np.zeros(len(actions), dtype=bool)  # replace if actual dones exist
             }
+
             if 'heat' in traj_group:
                 traj['obs']['heat'] = traj_group['heat'][:]
             else:
                 image_shape = traj_group['camera_0'].shape  # (T, H, W, C)
                 T, H, W = image_shape[:3]
+                # print(T, H, W); quit()
                 traj['obs']['heat'] = np.zeros((T, H, W, 1), dtype=np.uint8)
+
             demos.append(traj)
+
     return demos
+
 
 def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     dataset_path = config.dataset_path

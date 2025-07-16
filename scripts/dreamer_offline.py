@@ -409,9 +409,7 @@ def main(config):
     logger = tools.Logger(logdir, config.action_repeat * step)
 
     print("Create environments") 
-    action_space = gym.spaces.Box(
-        low=-config.turnRate, high=config.turnRate, shape=(1,), dtype=np.float32
-    )
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
     bounds = np.array([[config.x_min, config.x_max], [config.y_min, config.y_max], [0, 2 * np.pi], [0, 1]])
     low = bounds[:, 0]
     high = bounds[:, 1]
@@ -535,7 +533,7 @@ def main(config):
         
     def eval_obs_recon():
         recon_steps = 101
-        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 3)
+        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 8)
         train_loss = []
         eval_loss = []
         for i in range(recon_steps):
