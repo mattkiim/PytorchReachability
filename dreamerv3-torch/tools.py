@@ -271,11 +271,10 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 transition["state"] = curr_obs_state_vec
             
             transition["privileged_state"] = traj['obs']['priv_state'][t]
+            # print(traj['obs']['priv_state'][t]); quit()
             
-            if config.obs_priv_heat:
-                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
-            else:
-                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t])]
+            
+            transition["obs_state"] = traj['obs']['priv_state'][t]
         
             transition["reward"] = np.array(
                 0, dtype=np.float32

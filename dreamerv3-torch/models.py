@@ -249,6 +249,8 @@ class WorldModel(nn.Module):
         # 'is_terminal' is necesarry to train cont_head
         assert "is_terminal" in obs
         obs["cont"] = (1.0 - obs["is_terminal"]).unsqueeze(-1)
+        
+        # print(obs["image"].shape, obs["heat"].shape); quit()
         return obs
 
     def video_pred(self, data):
