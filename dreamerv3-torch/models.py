@@ -114,6 +114,7 @@ class WorldModel(nn.Module):
             #reward=config.reward_head["loss_scale"],
             cont=config.cont_head["loss_scale"],
             margin=config.margin_head["loss_scale"],
+            heat=4.0
         )
 
     def _init_obs_mlp(self, config, obs_shape):

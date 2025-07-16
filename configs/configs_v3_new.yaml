@@ -37,7 +37,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
