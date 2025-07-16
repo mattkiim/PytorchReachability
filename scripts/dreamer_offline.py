@@ -481,7 +481,7 @@ def main(config):
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
     
-    config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
+    config.dataset_path = config.dataset_path
     tools.fill_expert_dataset_dubins(config, expert_eps)
     expert_dataset = make_dataset(expert_eps, config)
     

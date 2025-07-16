@@ -22,6 +22,10 @@ from tqdm import tqdm
 from collections import defaultdict
 from typing import Any, Callable, Union
 import wandb
+
+import h5py
+from collections import OrderedDict
+
 to_np = lambda x: x.detach().cpu().numpy()
 
 
@@ -194,6 +198,33 @@ def save_checkpoint(
         )
 
     return best_score
+
+def load_h5_to_expert_eps(h5_path, expert_eps, max_trajs=None):
+    with h5py.File(h5_path, 'r') as f:
+        traj_keys = sorted(f.keys())
+        if max_trajs:
+            traj_keys = traj_keys[:max_trajs]
+
+        for traj_key in traj_keys:
+            traj_group = f[traj_key]
+            if 'camera_0' not in traj_group or 'actions' not in traj_group:
+                continue
+
+            images = traj_group['camera_0'][:]      # shape: (T, H, W, C)
+            actions = traj_group['actions'][:]      # shape: (T, act_dim)
+            states = traj_group.get('states', np.zeros_like(actions))  # fallback if missing
+
+            episode = {
+                'image': images.astype(np.uint8),
+                'action': actions.astype(np.float32),
+                'state': states.astype(np.float32),
+                'reward': np.zeros((len(images),), dtype=np.float32),
+                'is_first': np.zeros((len(images),), dtype=bool),
+                'is_terminal': np.zeros((len(images),), dtype=bool),
+            }
+            episode['is_first'][0] = True  # mark episode start
+
+            expert_eps[traj_key] = episode
 
 def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     dataset_path = config.dataset_path
