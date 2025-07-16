@@ -266,7 +266,7 @@ class Dreamer(nn.Module):
                         elif name != "margin":
                             loss = -pred.log_prob(data[name])
                             if name == "heat":
-                                loss *= 10 # TODO: soft code this
+                                loss *= 100 # TODO: soft code this
                             assert loss.shape == embed.shape[:2], (name, loss.shape)
                             losses[name] = loss
                         

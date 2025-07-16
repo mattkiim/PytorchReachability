@@ -238,8 +238,8 @@ class WorldModel(nn.Module):
             k: torch.tensor(v, device=self._config.device, dtype=torch.float32)
             for k, v in obs.items()
         }
-        obs["image"] = 1 - obs["image"] / 255.0
-        obs["heat"] = 1 - obs["heat"] / 255.0
+        obs["image"] = obs["image"] / 255.0
+        obs["heat"] = obs["heat"] / 255.0
         if "discount" in obs:
             obs["discount"] *= self._config.discount
             # (batch_size, batch_length) -> (batch_size, batch_length, 1)
