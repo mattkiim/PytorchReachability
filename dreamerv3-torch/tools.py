@@ -200,7 +200,7 @@ def save_checkpoint(
     return best_score
 
 def load_h5_to_expert_eps(h5_path, max_trajs=None):
-    expert_eps = {}
+    demos = []
     with h5py.File(h5_path, 'r') as f:
         traj_keys = sorted(f.keys())
         if max_trajs:
@@ -211,31 +211,31 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None):
             if 'camera_0' not in traj_group or 'actions' not in traj_group:
                 continue
 
-            images = traj_group['camera_0'][:]      # shape: (T, H, W, C)
-            actions = traj_group['actions'][:]      # shape: (T, act_dim)
-            states = traj_group.get('states', np.zeros_like(actions))  # fallback if missing
-
-            episode = {
-                'image': images.astype(np.uint8),
-                'action': actions.astype(np.float32),
-                'state': states.astype(np.float32),
-                'reward': np.zeros((len(images),), dtype=np.float32),
-                'is_first': np.zeros((len(images),), dtype=bool),
-                'is_terminal': np.zeros((len(images),), dtype=bool),
+            traj = {
+                'obs': {
+                    'image': traj_group['camera_0'][:],
+                    'state': traj_group['states'][:],
+                    'priv_state': traj_group['states'][:],  # use same if only 1
+                    'priv_heat': traj_group['labels'][:] if 'labels' in traj_group else np.zeros(len(traj_group['camera_0']), dtype=np.float32)
+                },
+                'actions': traj_group['actions'][:],
+                'dones': np.zeros(len(traj_group['actions']), dtype=bool)  # you can replace if real dones are available
             }
-            episode['is_first'][0] = True  # mark episode start
-
-            expert_eps[traj_key] = episode
-    return expert_eps
+            if 'heat' in traj_group:
+                traj['obs']['heat'] = traj_group['heat'][:]
+            else:
+                image_shape = traj_group['camera_0'].shape  # (T, H, W, C)
+                T, H, W = image_shape[:3]
+                traj['obs']['heat'] = np.zeros((T, H, W, 1), dtype=np.uint8)
+            demos.append(traj)
+    return demos
 
 def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     dataset_path = config.dataset_path
+    num_train = config.num_train_trajs
     
     demos = load_h5_to_expert_eps(dataset_path)
-    quit()
     
-    num_train = config.num_train_trajs
-        
     # if not config.include_no_heat:
     #     # take the last half of demos
     #     demos = demos[len(demos) // 2:]
@@ -320,8 +320,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             color="magenta",
             attrs=["bold"],
         )
-
-
     return 0
 
 def simulate(

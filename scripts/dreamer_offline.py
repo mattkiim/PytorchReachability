@@ -69,14 +69,6 @@ class Dreamer(nn.Module):
         )[config.expl_behavior]().to(self._config.device)
 
         self._make_pretrain_opt()
-        
-        if self._config.fill_cache:
-            cache_path = f"{self._config.wm_cache_path}_{self._config.alpha_in}.pkl"
-            if os.path.exists(cache_path):
-                self.load_cache() 
-            else:
-                print(f"No cache file found at {cache_path}; filling cache...")
-                self.fill_cache()
 
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
