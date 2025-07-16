@@ -263,20 +263,23 @@ class Dreamer(nn.Module):
                     for name, pred in preds.items():
                         if name == "cont":
                             cont_loss = -pred.log_prob(data[name])
-                        elif name == "heat":
-                            wt = 1.0 + 10 * (1 - data["heat"])  # broadcast
-                            # match shapes (loss from MSEDist is [B,T]) so we must recompute manual mse:
-                            pred_mean = pred.mode()  # (B,T,H,W,1)
-                            diff = pred_mean - data["heat"]
-                            sq = diff * diff * wt
-                            # reduce over pixels
-                            sq = sq.mean(dim=(-4, -3, -2, -1))  # -> (B,T)
-                            loss = sq
+                        elif name == "vehicle_presence":
+                            # Ground truth vehicle mask: (B, T, H, W, 1)
+                            heat = data["heat"]  # assumed normalized [0,1] shape (B, T, H, W, 1)
+                            vehicle_hi = (255 / 1.1) / 255
+                            obstacle_px = (255 / 2 + 0.001) / 255.0  # px where vehicle is not present
+                            vehicle_mask = ((heat <= vehicle_hi) & (heat != obstacle_px)).float()
+
+                            pred_mask = pred
+                            bce_loss = nn.functional.binary_cross_entropy(pred_mask, vehicle_mask, reduction="none")
+                            bce_loss = bce_loss.mean(dim=(2, 3, 4))  # avg over H, W, C → shape (B, T)
+                            losses["vehicle_presence"] = bce_loss
+                            
                         elif name != "margin":
                             loss = -pred.log_prob(data[name])
                             assert loss.shape == embed.shape[:2], (name, loss.shape)
                             losses[name] = loss
-                        
+
                     recon_loss = sum(losses.values())
                     # failure margin
                     # vis_failure_data = data["vis_failure"]
