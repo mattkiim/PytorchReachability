@@ -174,7 +174,7 @@ defaults:
   use_wandb: False
 
   alpha_in: 8
-  alpha_out: 8
+  alpha_out: 2
   test: False
 
   include_no_heat_vis: False

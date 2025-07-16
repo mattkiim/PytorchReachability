@@ -166,6 +166,14 @@ class HeatFrameGenerator:
           vehicle_mask = (vehicle == 0)
           heat_frame[vehicle_mask] = DEFAULT_VEHICLE_TEMP
 
+      # black outline
+      from scipy.ndimage import binary_erosion
+      vehicle_mask_binary = np.squeeze(vehicle_mask.astype(bool), -1)
+      outline = vehicle_mask_binary ^ binary_erosion(vehicle_mask_binary)
+      heat_frame = np.squeeze(heat_frame, -1)
+      heat_frame[outline] = 0
+      heat_frame = heat_frame[..., None]  # Restore original shape (H, W, 1)
+        
       return heat_frame, self.vehicle_temp
     
     def heat_to_temp(self, heat_value, def_temp, alpha_in=3):
@@ -279,8 +287,15 @@ class HeatFrameGenerator:
             
             # rgb_out[..., 2:3][inside_mask] = temp
             # rgb_out[..., 2:3][outside_mask] = temp
+            
+        
+        # black outline
+        from scipy.ndimage import binary_erosion
+        mask = np.squeeze(vehicle_mask, -1)
+        outline = mask ^ binary_erosion(mask)
+        rgb_out[outline] = (0, 0, 0)
 
-        return rgb_out
+        return np.clip(rgb_out, 0, 255).astype(img_array.dtype)
 
 def draw_comet(draw, base_center, angle_rad, length, width, fill_color="blue"):
     """Draw a comet‑shaped arrow whose *base* is centred on ``base_center``.
