@@ -263,10 +263,17 @@ class Dreamer(nn.Module):
                     for name, pred in preds.items():
                         if name == "cont":
                             cont_loss = -pred.log_prob(data[name])
+                        elif name == "heat":
+                            wt = 1.0 + 10 * (1 - data["heat"])  # broadcast
+                            # match shapes (loss from MSEDist is [B,T]) so we must recompute manual mse:
+                            pred_mean = pred.mode()  # (B,T,H,W,1)
+                            diff = pred_mean - data["heat"]
+                            sq = diff * diff * wt
+                            # reduce over pixels
+                            sq = sq.mean(dim=(-4, -3, -2, -1))  # -> (B,T)
+                            loss = sq
                         elif name != "margin":
                             loss = -pred.log_prob(data[name])
-                            if name == "heat":
-                                loss *= 100 # TODO: soft code this
                             assert loss.shape == embed.shape[:2], (name, loss.shape)
                             losses[name] = loss
                         
