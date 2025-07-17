@@ -270,7 +270,7 @@ class Dreamer(nn.Module):
                             obstacle_px = (255 / 2 + 0.001) / 255.0  # px where vehicle is not present
                             vehicle_mask = ((heat <= vehicle_hi) & (heat != obstacle_px)).float()
 
-                            pred_mask = pred
+                            pred_mask = pred.mode().values.unsqueeze(-1)
                             bce_loss = nn.functional.binary_cross_entropy(pred_mask, vehicle_mask, reduction="none")
                             bce_loss = bce_loss.mean(dim=(2, 3, 4))  # avg over H, W, C → shape (B, T)
                             losses["vehicle_presence"] = bce_loss
