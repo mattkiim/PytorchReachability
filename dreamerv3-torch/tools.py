@@ -258,6 +258,38 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
                 traj['obs']['heat'] = np.zeros((T, H, W, 1), dtype=np.uint8)
 
             demos.append(traj)
+            
+        # traj_index = 0
+        # frame_index = 0
+
+        # traj = demos[traj_index]
+        # rgb_frame = traj['obs']['image'][frame_index]        # shape: (H, W, 3)
+        # heat_frame = traj['obs']['heat'][frame_index]        # shape: (H, W, 1) or (H, W)
+
+        # # Ensure heat is squeezed to (H, W)
+        # heat_frame = heat_frame.squeeze()
+
+        # # Normalize if needed
+        # if rgb_frame.dtype != 'uint8':
+        #     rgb_frame = (rgb_frame * 255).astype('uint8')
+        # if heat_frame.dtype != 'uint8':
+        #     heat_frame = (heat_frame * 255).astype('uint8')
+        # import matplotlib.pyplot as plt
+        # # Plot both side-by-side
+        # plt.figure(figsize=(10, 5))
+
+        # plt.subplot(1, 2, 1)
+        # plt.title("RGB Image")
+        # plt.imshow(rgb_frame)
+        # plt.axis("off")
+
+        # plt.subplot(1, 2, 2)
+        # plt.title("Heatmap")
+        # plt.imshow(heat_frame, cmap='hot')
+        # plt.axis("off")
+
+        # plt.tight_layout()
+        # plt.savefig(f"heatmap_{traj_index}_{frame_index}.png"); quit()
 
     return demos
 
