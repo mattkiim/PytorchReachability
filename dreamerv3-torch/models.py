@@ -253,14 +253,14 @@ class WorldModel(nn.Module):
         # print(obs["image"].shape, obs["heat"].shape); quit()
         return obs
 
-    def video_pred(self, data):
+    def video_pred(self, data): # TODO: figure out what this does
         data = self.preprocess(data)
         embed = self.encoder(data)
 
         states, _ = self.dynamics.observe(
             embed[:6, :5], data["action"][:6, :5], data["is_first"][:6, :5]
         )
-        recon_output = self.heads["decoder"](self.dynamics.get_feat(states))
+        recon_output = self.heads["decoder"](self.dynamics.get_feat(states)) 
         recon_image = recon_output["image"].mode()
         if "heat" in recon_output.keys():
             recon_heat = recon_output["heat"].mode()
