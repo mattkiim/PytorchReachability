@@ -106,16 +106,16 @@ class HeatFrameGenerator:
 
         return heat_frame
     
-    def get_heat_frame_v2(self, img_array, heat=True, alpha_in=3, alpha_out=5):
+    def get_heat_frame_v2(self, img_array, config, heat=True, alpha_in=3, alpha_out=5):
         '''
         partial observability
         
         if you spend too long in unsafe, become different color when exiting (RGB)
         the heat map should be the same as v3
         '''
-        return self.get_heat_frame_v3(img_array, heat, alpha_in=alpha_in, alpha_out=alpha_out)
+        return self.get_heat_frame_v3(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out)
 
-    def get_heat_frame_v3(self, img_array, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
+    def get_heat_frame_v3(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
       '''
       full observability
       
@@ -426,7 +426,7 @@ def get_frame_pil(states, config, heat_gen, curr_traj_count: int = 0):
             img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
         elif heat_opt == 3:
             img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v3(
-                np.array(img_array), heat=hot,
+                np.array(img_array), config, heat=hot,
                 alpha_in=config.alpha_in, alpha_out=config.alpha_out,
             )
             img_array = heat_gen.get_rgb_v3(

@@ -93,18 +93,6 @@ class WorldModel(nn.Module):
             device=config.device,
             name="Cont",
         )
-        
-        # self.heads["vehicle_presence"] = networks.ConvDecoder(
-        #     feat_size=feat_size,
-        #     shape=(1, 128, 128),
-        #     depth=32,
-        #     act="ELU",           # or pass in from config
-        #     norm=True,
-        #     kernel_size=4,
-        #     minres=4,
-        #     outscale=1.0,
-        #     cnn_sigmoid=True     # so output is in [0, 1] range for BCE
-        # )
                 
         for name in config.grad_heads:
             assert name in self.heads, name

@@ -488,6 +488,7 @@ class MultiDecoder(nn.Module):
                 outscale=outscale,
                 cnn_sigmoid=cnn_sigmoid,
             )
+                    
         self._image_dist = image_dist
 
     def forward(self, features):

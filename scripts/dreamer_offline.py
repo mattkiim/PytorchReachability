@@ -263,22 +263,26 @@ class Dreamer(nn.Module):
                     for name, pred in preds.items():
                         if name == "cont":
                             cont_loss = -pred.log_prob(data[name])
-                        # elif name == "vehicle_presence":
-                        #     # Ground truth vehicle mask: (B, T, H, W, 1)
-                        #     heat = data["heat"]  # assumed normalized [0,1] shape (B, T, H, W, 1)
-                        #     vehicle_hi = (255 / 1.1) / 255
-                        #     obstacle_px = (255 / 2 + 0.001) / 255.0  # px where vehicle is not present
-                        #     vehicle_mask = ((heat <= vehicle_hi) & (heat != obstacle_px)).float()
-
-                        #     pred_mask = pred.mode().values.unsqueeze(-1)
-                        #     bce_loss = nn.functional.binary_cross_entropy(pred_mask, vehicle_mask, reduction="none")
-                        #     bce_loss = bce_loss.mean(dim=(2, 3, 4))  # avg over H, W, C → shape (B, T)
-                        #     losses["vehicle_presence"] = bce_loss
-                            
                         elif name != "margin":
                             loss = -pred.log_prob(data[name])
                             assert loss.shape == embed.shape[:2], (name, loss.shape)
                             losses[name] = loss
+                            
+                            if name == "heat": # TODO: if this doesn't work, take a region around data['obs']['privileged_state'][t][:2]
+                                heat_pred = pred.mode()
+                                heat_true = data["heat"]
+                                
+                                vehicle_hi = (255 / 1.1) / 255
+                                obstacle_px = (255 / 2 + 0.001) / 255.0
+                                
+                                obstacle_mask = (torch.abs(heat_true - obstacle_px) < 0.01)
+                                vehicle_mask = ((heat_true <= vehicle_hi) & ~obstacle_mask).float()
+                                masked_heat = heat_true * vehicle_mask
+
+                                sqerr = (heat_pred - heat_true) ** 2
+                                pixel_w = 1.0 + 10 * vehicle_mask
+                                heat_loss = (masked_heat * sqerr).mean(dim=(2, 3, 4))
+                                losses["vehicle_heat"] = heat_loss
 
                     recon_loss = sum(losses.values())
                     # failure margin
@@ -446,10 +450,10 @@ class Dreamer(nn.Module):
                     heat, _ = gen.get_heat_frame_v2(rgb, heat=True, heat_value=heat_val)
                     no_heat = None
                     if self._config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v2(rgb, heat=False, heat_value=heat_val)
+                        no_heat, _ = gen.get_heat_frame_v2(rgb, self._config, heat=False, heat_value=heat_val)
                 elif self._config.heat_mode == 3:
                     rgb = gen.get_rgb_v3(img, self._config, heat=True, heat_value=heat_val)
-                    heat, _ = gen.get_heat_frame_v3(rgb, heat=True, heat_value=heat_val)
+                    heat, _ = gen.get_heat_frame_v3(rgb, self._config, heat=True, heat_value=heat_val)
                     no_heat = None
                     if self._config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v3(rgb, heat=False, heat_value=heat_val)

@@ -643,10 +643,10 @@ def single_rollout(initial_conditions, config, T=100, target=None):
 
             if config.heat_mode == 3:
                 img = gen.get_rgb_v3(img, config, heat=True, heat_value=vehicle_heat)
-                heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=vehicle_heat)
+                heat, _ = gen.get_heat_frame_v3(img, config, heat=True, heat_value=vehicle_heat)
             elif config.heat_mode == 2:
                 img = gen.get_rgb_v2(img, config, heat=True)
-                heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=vehicle_heat)
+                heat, _ = gen.get_heat_frame_v2(img, config, heat=True, heat_value=vehicle_heat)
             elif config.heat_mode == 1:
                 heat = gen.get_heat_frame_v1(img, heat=True)
             elif config.heat_mode == 0:
