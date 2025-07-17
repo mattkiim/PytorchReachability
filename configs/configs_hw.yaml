@@ -42,7 +42,7 @@ defaults:
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 6001 ## 10000
+  rssm_train_steps: 20001 ## 10000
   
   # Environment
   task: 'dubins-wm' # shouldnt need this?
@@ -57,7 +57,7 @@ defaults:
   dyn_hidden: 512
   dyn_deter: 512
   dyn_stoch: 32
-  dyn_discrete: 0 # 0 for continuous latent
+  dyn_discrete: 32 # 0 for continuous latent
   dyn_rec_depth: 1
   dyn_mean_act: 'none'
   dyn_std_act: 'sigmoid2'
