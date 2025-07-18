@@ -277,12 +277,18 @@ class Dreamer(nn.Module):
                                 
                                 obstacle_mask = (torch.abs(heat_true - obstacle_px) < 0.01)
                                 vehicle_mask = ((heat_true <= vehicle_hi) & ~obstacle_mask).float()
-                                masked_heat = heat_true * vehicle_mask
+                                # masked_heat = heat_true * vehicle_mask
 
                                 sqerr = (heat_pred - heat_true) ** 2
-                                pixel_w = 1.0 + 10 * vehicle_mask
-                                heat_loss = (masked_heat * sqerr).mean(dim=(2, 3, 4))
+                                pixel_w = 1 + 100 * vehicle_mask
+                                weighted = pixel_w * sqerr
+                                norm = pixel_w.sum(dim=(2, 3, 4)).clamp_min(1.0)  # avoid div-by-zero
+                                heat_loss = weighted.sum(dim=(2, 3, 4)) / norm
                                 losses["vehicle_heat"] = heat_loss
+                                
+                                # pixel_w = 10 * vehicle_mask
+                                # heat_loss = (pixel_w * sqerr).mean(dim=(2, 3, 4))
+                                # losses["vehicle_heat"] = heat_loss
 
                     recon_loss = sum(losses.values())
                     # failure margin

@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 # note: need to include the dreamerv3 repo for this
 from dreamer import make_dataset
-from generate_data_traj_cont import get_frame_eval, HeatFrameGenerator
+from generate_data_traj_cont import get_frame_eval, get_frame_eval_pil, HeatFrameGenerator
 
 # NOTE: all the reach-avoid gym environments are in reach_rl_gym, the constraint information is output as an element of the info dictionary in gym.step() function
 """
@@ -370,7 +370,10 @@ def make_cache(config, thetas, heat_values):
                 y_prev = ys_prev[idx[1]]
 
                 prev_state = torch.tensor([x_prev, y_prev, theta_prev])
-                img = get_frame_eval(prev_state, config)
+                if config.use_pil:
+                    img = get_frame_eval_pil(prev_state, config)
+                else:
+                    img = get_frame_eval(prev_state, config)
                 gen = HeatFrameGenerator(config)
                 gen._compute_geometry(img.shape)
 
@@ -388,10 +391,10 @@ def make_cache(config, thetas, heat_values):
                     img = gen.get_rgb_v2(img, config, heat=True)
                     heat, _ = gen.get_heat_frame_v2(img, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v2(img, heat=False, heat_value=heat_value)
+                        no_heat, _ = gen.get_heat_frame_v2(img, config, heat=False, heat_value=heat_value)
                 elif config.heat_mode == 3:
                     img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
-                    heat, _ = gen.get_heat_frame_v3(img, heat=True, heat_value=heat_value)
+                    heat, _ = gen.get_heat_frame_v3(img, config, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value) # BUG: heat=False seems to remove vehicle
                 else:
