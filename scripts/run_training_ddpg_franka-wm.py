@@ -11,9 +11,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
-saferl_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '/Lipschitz_Continuous_Reachability_Learning'))
+dreamer_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreamerv3-torch'))
+sys.path.append(dreamer_dir)
+saferl_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '/PyHJ'))
 sys.path.append(saferl_dir)
-print(sys.path)
 import models
 import tools
 import ruamel.yaml as yaml
@@ -37,18 +38,7 @@ import collections
 from dreamer import make_dataset
 
 # NOTE: all the reach-avoid gym environments are in reach_rl_gym, the constraint information is output as an element of the info dictionary in gym.step() function
-"""
-    Note that, we can pass arguments to the script by using
-    python run_training_ddpg.py --task ra_droneracing_Game-v6 --control-net 512 512 512 512 --disturbance-net 512 512 512 512 --critic-net 512 512 512 512 --epoch 10 --total-episodes 160 --gamma 0.9
-    python run_training_ddpg.py --task ra_highway_Game-v2 --control-net 512 512 512 --disturbance-net 512 512 512 --critic-net 512 512 512 --epoch 10 --total-episodes 160 --gamma 0.9
-    python run_training_ddpg.py --task ra_1d_Game-v0 --control-net 32 32 --disturbance-net 4 4 --critic-net 4 4 --epoch 10 --total-episodes 160 --gamma 0.9
-    
-    For learning the classical reach-avoid value function (baseline):
-    python run_training_ddpg.py --task ra_droneracing_Game-v6 --control-net 512 512 512 512 --disturbance-net 512 512 512 512 --critic-net 512 512 512 512 --epoch 10 --total-episodes 160 --gamma 0.9 --is-game-baseline True
-    python run_training_ddpg.py --task ra_highway_Game-v2 --control-net 512 512 512 --disturbance-net 512 512 512 --critic-net 512 512 512 --epoch 10 --total-episodes 160 --gamma 0.9 --is-game-baseline True
-    python run_training_ddpg.py --task ra_1d_Game-v0 --control-net 32 32 --disturbance-net 4 4 --critic-net 4 4 --epoch 10 --total-episodes 160 --gamma 0.9 --is-game-baseline True
 
-"""
 def recursive_update(base, update):
     for key, value in update.items():
         if isinstance(value, dict) and key in base:
@@ -61,6 +51,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     
     parser.add_argument("--configs", nargs="+")
+    parser.add_argument("--config_path", default="configs.yaml", type=str)
     parser.add_argument("--expt_name", type=str, default=None)
     parser.add_argument("--resume_run", type=bool, default=False)
     # environment parameters
@@ -77,8 +68,7 @@ def get_args():
 
     yml = yaml.YAML(typ="safe", pure=True)
     configs = yml.load(
-        #(pathlib.Path(sys.argv[0]).parent / "../configs/config.yaml").read_text()
-        (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text()
+        (pathlib.Path(sys.argv[0]).parent / f"../{config.config_path}").read_text()
     )
 
     name_list = ["defaults", *config.configs] if config.configs else ["defaults"]
@@ -97,18 +87,13 @@ def get_args():
 
     print("---------------------")
     cprint(f"Experiment name: {config.expt_name}", "red", attrs=["bold"])
-    cprint(f"Task: {final_config.task_lcrl}", "cyan", attrs=["bold"])
+    cprint(f"Task: {final_config.task}", "cyan", attrs=["bold"])
     cprint(f"Logging to: {final_config.logdir+'/lcrl'}", "cyan", attrs=["bold"])
     print("---------------------")
     return final_config
 
-
-
 args=get_args()
 config = args
-
-
-
 
 image_size = config.size[0] #128
 cam_obs_space = gym.spaces.Box(
@@ -117,50 +102,61 @@ cam_obs_space = gym.spaces.Box(
 policy_obs_space = gym.spaces.Box(
         low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32
     )
-bool_space = gym.spaces.Box(
-        low=False, high=True, shape=(), dtype=bool
-    )
+bool_space = gym.spaces.Box(low=np.array([0]), high=np.array([1]), dtype=np.float32)
+
+obs_observation_space = gym.spaces.Box(
+    low=-1, high=1, shape=(8,), dtype=np.float32
+)
+
+heat_observation_space = gym.spaces.Box(
+    low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
+)
+
 observation_space = gym.spaces.Dict({
-        'front_cam': cam_obs_space,
+        'obs_state': obs_observation_space,
+        'image': cam_obs_space,
+        'heat': heat_observation_space,
         'is_first': bool_space,
         'is_last': bool_space,
         'is_terminal': bool_space,
-        'policy': policy_obs_space,
-        'wrist_cam': cam_obs_space,
+        # 'policy': policy_obs_space,
+        # 'wrist_cam': cam_obs_space,
     })
-action_space = gym.spaces.Box(low=-0.15, high=0.15, shape=(7,), dtype=np.float32)
+action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
 
 
 config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
 wm = models.WorldModel(observation_space, action_space, 0, config)
 
-ckpt_path = '/home/kensuke/IsaacLab/dreamer_l2_rand_-1.0_15.0/step_55000.pt'
-checkpoint = torch.load(ckpt_path)
-
+ckpt_path = config.rssm_ckpt_path
+checkpoint = torch.load(ckpt_path, weights_only=True)
 
 state_dict = {k[14:]:v for k,v in checkpoint['agent_state_dict'].items() if '_wm' in k}
-
+# print(state_dict.keys())
+# print(state_dict['encoder._cnn.layers.0.weight'].shape)
+# quit()
 wm.load_state_dict(state_dict)
 
 # NOTE: you can replace this with the dataset you made for the dubins wm training
-directory = '/home/kensuke/IsaacLab/dreamer_l2_rand_-1.0_15.0/train_eps'
-
-train_eps = tools.load_episodes(directory, limit=config.dataset_size)
-expert_eps = collections.OrderedDict()
+config.dataset_path = f"{config.dataset_path}"
 
 config.batch_size = 1
-config.batch_length = 5
-train_dataset = make_dataset(train_eps, config)
-tools.fill_expert_dataset(config, expert_eps)
-expert_dataset = make_dataset(expert_eps, config)
+config.batch_length = 2
+config.dataset_path = f"{config.dataset_path}"
+
+offline_eps = collections.OrderedDict()
+tools.fill_expert_dataset_dubins(config, offline_eps)
+offline_dataset = make_dataset(offline_eps, config)
+
+online_eps = collections.OrderedDict()
+tools.fill_expert_dataset_dubins(config, online_eps, is_val_set=True)
+online_dataset = make_dataset(online_eps, config)
+
+datasets = [offline_dataset, online_dataset]
 
 
-# NOTE: should only need 1 dataset: the offline dataset u collected from the script.
-datasets = [train_dataset, expert_dataset]
-
-
-env = gymnasium.make(args.task_lcrl, params = [wm, datasets, config])
+env = gymnasium.make(args.task, params = [wm, datasets, config])
 
 
 # check if the environment has control and disturbance actions:
@@ -175,10 +171,10 @@ args.max_action1 = env.action1_space.high[0]
 
 
 train_envs = DummyVectorEnv(
-    [lambda: gymnasium.make(args.task_lcrl, params = [wm, datasets, config]) for _ in range(args.training_num)]
+    [lambda: gymnasium.make(args.task, params = [wm, datasets, config]) for _ in range(args.training_num)]
 )
 test_envs = DummyVectorEnv(
-    [lambda: gymnasium.make(args.task_lcrl, params = [wm, datasets, config]) for _ in range(args.test_num)]
+    [lambda: gymnasium.make(args.task, params = [wm, datasets, config]) for _ in range(args.test_num)]
 )
 
 
@@ -222,6 +218,7 @@ else:
 
 critic = Critic(critic_net, device=args.device).to(args.device)
 critic_optim = torch.optim.Adam(critic.parameters(), lr=args.critic_lr)
+critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=critic_optim, gamma=0.995)
 
 log_path = None
 
@@ -229,41 +226,43 @@ from PyHJ.policy import avoid_DDPGPolicy_annealing as DDPGPolicy
 
 print("DDPG under the Avoid annealed Bellman equation with no Disturbance has been loaded!")
 
-actor1_net = Net(args.state_shape, hidden_sizes=args.control_net, activation=actor_activation, device=args.device)
-actor1 = Actor(
-    actor1_net, args.action1_shape, max_action=args.max_action1, device=args.device
+actor_net = Net(args.state_shape, hidden_sizes=args.control_net, activation=actor_activation, device=args.device)
+actor = Actor(
+    actor_net, args.action_shape, max_action=args.max_action, device=args.device
 ).to(args.device)
-actor1_optim = torch.optim.Adam(actor1.parameters(), lr=args.actor_lr)
-
+actor_optim = torch.optim.AdamW(actor.parameters(), lr=args.actor_lr)
+actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=actor_optim, gamma=0.995)
 
 policy = DDPGPolicy(
 critic,
 critic_optim,
+critic_scheduler=critic_scheduler,
 tau=args.tau,
-gamma=args.gamma_lcrl,
+gamma=args.gamma_pyhj,
 exploration_noise=GaussianNoise(sigma=args.exploration_noise),
 reward_normalization=args.rew_norm,
 estimation_step=args.n_step,
 action_space=env.action_space,
-actor1=actor1,
-actor1_optim=actor1_optim,
+actor=actor,
+actor_optim=actor_optim,
+actor_scheduler=actor_scheduler,
 actor_gradient_steps=args.actor_gradient_steps,
 )
 
-log_path = os.path.join(args.logdir+'/lcrl', args.task_lcrl, 'wm_actor_activation_{}_critic_activation_{}_game_gd_steps_{}_tau_{}_training_num_{}_buffer_size_{}_c_net_{}_{}_a1_{}_{}_a2_{}_{}_gamma_{}'.format(
-args.actor_activation, 
-args.critic_activation, 
-args.actor_gradient_steps,args.tau, 
-args.training_num, 
-args.buffer_size,
-args.critic_net[0],
-len(args.critic_net),
-args.control_net[0],
-len(args.control_net),
-args.disturbance_net[0],
-len(args.disturbance_net),
-args.gamma_lcrl)
-)
+log_path = os.path.join(args.logdir+'/lcrl', args.task, 'wm_actor_activation_{}_critic_activation_{}_game_gd_steps_{}_tau_{}_training_num_{}_buffer_size_{}_c_net_{}_{}_a1_{}'.format(
+    args.actor_activation, 
+    args.critic_activation, 
+    args.actor_gradient_steps,args.tau, 
+    args.training_num, 
+    args.buffer_size,
+    args.critic_net[0],
+    len(args.critic_net),
+    args.control_net[0],
+    len(args.control_net),
+    # args.disturbance_net[0],
+    # len(args.disturbance_net),
+    # args.gamma_lcrl
+))
 
 
 # collector
@@ -286,12 +285,11 @@ log_path = log_path+'/noise_{}_actor_lr_{}_critic_lr_{}_batch_{}_step_per_epoch_
         args.exploration_noise, 
         args.actor_lr, 
         args.critic_lr, 
-        args.batch_size_lcrl,
+        args.batch_size_pyhj,
         args.step_per_epoch,
         args.kwargs,
         args.seed
     )
-
 
 if args.continue_training_epoch is not None:
     epoch = args.continue_training_epoch
@@ -301,7 +299,6 @@ if args.continue_training_epoch is not None:
             "policy.pth"
         )
     ))
-
 
 if args.continue_training_logdir is not None:
     policy.load_state_dict(torch.load(args.continue_training_logdir))
@@ -317,7 +314,6 @@ def save_best_fn(policy, epoch=epoch):
             "policy.pth"
         )
     )
-
 
 def stop_fn(mean_rewards):
     return False
@@ -354,7 +350,7 @@ for iter in range(args.total_episodes):
     args.step_per_epoch,
     args.step_per_collect,
     args.test_num,
-    args.batch_size_lcrl,
+    args.batch_size_pyhj,
     update_per_step=args.update_per_step,
     stop_fn=stop_fn,
     save_best_fn=save_best_fn,

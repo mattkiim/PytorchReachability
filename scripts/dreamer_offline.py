@@ -287,7 +287,7 @@ class Dreamer(nn.Module):
                         lx_loss += torch.relu(gamma + neg).mean()
 
                     lx_loss *=  self._config.margin_head["loss_scale"]
-                    if step < 3000:
+                    if step < 25000:
                         lx_loss *= 0
                         cont_loss *= 0
             
@@ -584,9 +584,6 @@ def main(config):
         
         logger.write(step=logger.step)
         recon_eval = eval_obs_recon()  # testing observation reconstruction
-        
-        # if is_eval:
-        #     quit() # TODO: make this more graceful
 
         agent.train()
         return recon_eval, recon_eval

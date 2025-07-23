@@ -244,17 +244,17 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
                     'state': traj_group['states'][:],
                     'priv_state': traj_group['states'][:],
                     'priv_heat': traj_group['labels'][:] if 'labels' in traj_group else np.zeros(len(traj_group['camera_0']), dtype=np.float32)
-                },
+                }, # NOTE: there is no priv_heat label in the data as of 7/22
                 'actions': actions.astype(np.float32),
                 'dones': np.zeros(len(actions), dtype=bool)  # replace if actual dones exist
             }
 
-            if 'heat' in traj_group:
-                traj['obs']['heat'] = traj_group['heat'][:]
+            if 'camera_2' in traj_group: # FIXME: not sure of this works...
+                traj['obs']['heat'] = traj_group['camera_2'][:, :, :, :1]
+                # print(traj_group['camera_2'][:, :, :, :1].shape); quit()
             else:
                 image_shape = traj_group['camera_0'].shape  # (T, H, W, C)
                 T, H, W = image_shape[:3]
-                # print(T, H, W); quit()
                 traj['obs']['heat'] = np.zeros((T, H, W, 1), dtype=np.uint8)
 
             demos.append(traj)
@@ -299,15 +299,8 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     num_train = config.num_train_trajs
     
     demos = load_h5_to_expert_eps(dataset_path)
-    
-    # if not config.include_no_heat:
-    #     # take the last half of demos
-    #     demos = demos[len(demos) // 2:]
-    #     num_train = config.num_train_trajs // 2
-    
-    
+        
     pixel_keys = sorted(['image', 'heat'])
-    # pixel_keys = sorted(['image'])
     state_keys = sorted(['state'])
 
     for i, demo in tqdm(
@@ -335,9 +328,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 transition["state"] = curr_obs_state_vec
             
             transition["privileged_state"] = traj['obs']['priv_state'][t]
-            # print(traj['obs']['priv_state'][t]); quit()
-            
-            
             transition["obs_state"] = traj['obs']['priv_state'][t]
         
             transition["reward"] = np.array(

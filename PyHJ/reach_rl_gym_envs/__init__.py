@@ -62,3 +62,10 @@ register(
     reward_threshold=1e8,
 )
 
+register(
+    id="franka-wm",
+    entry_point="PyHJ.reach_rl_gym_envs.franka-wm:Franka_WM_Env",
+    max_episode_steps=16,
+    reward_threshold=1e8,
+)
+

@@ -14,16 +14,16 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 302 ## 4000 in paper
-  num_train_trajs: 272 ## 3800 in paper
+  num_trajs: 42 ## 4000 in paper
+  num_train_trajs: 32 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/ken/new_skittles/consolidated.h5' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/hw'
-  hj_cache_path: 'cache/hj/hw'
+  dataset_path: '/data/mattkiim/consolidated.h5' # '128' should be the same as the size above
+  wm_cache_path: 'cache/wm/hw_sanity'
+  hj_cache_path: 'cache/hj/hw_sanity'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
   logdir: 'logs/hw'
-  rssm_ckpt_path: 'logs/hw/rssm_ckpt.pt'
+  rssm_ckpt_path: 'logs/hw_sanity/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -32,9 +32,9 @@ defaults:
   deterministic_run: True
   steps: 1e6
   parallel: False
-  eval_every: 500
+  eval_every: 2000
   eval_episode_num: 10
-  log_every: 500
+  log_every: 2000
   reset_every: 0
   device: 'cuda:1' # TODO: softcode value
   compile: True
@@ -45,7 +45,7 @@ defaults:
   rssm_train_steps: 100001 ## 10000
   
   # Environment
-  task: 'dubins-wm' # shouldnt need this?
+  task: 'franka-wm' # shouldnt need this?
   envs: 1
   action_repeat: 1
   time_limit: 100

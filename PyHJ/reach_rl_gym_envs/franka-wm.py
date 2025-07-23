@@ -20,7 +20,7 @@ class Franka_WM_Env(gym.Env):
         self.low = np.array([
             -1., -1., -np.pi
         ])
-        self.device = 'cuda:0'
+        self.device = 'cuda:1'
 
         self.set_wm(*params)
 
@@ -28,7 +28,7 @@ class Franka_WM_Env(gym.Env):
         self.action1_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32) # control action space
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32) # joint action space
         self.scalar = 0.15
-        self.image_size=128
+        self.image_size = 128
         self.N = 5 # number of samples to take
     def set_wm(self, wm, past_data, config):
         self.encoder = wm.encoder.to(self.device)
