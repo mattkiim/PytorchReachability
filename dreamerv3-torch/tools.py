@@ -248,51 +248,19 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
                 'actions': actions.astype(np.float32),
                 'dones': np.zeros(len(actions), dtype=bool)  # replace if actual dones exist
             }
+            
 
-            if 'camera_2' in traj_group: # FIXME: not sure of this works...
+            if 'camera_2' in traj_group: # FIXME: not sure if this works...
                 traj['obs']['heat'] = traj_group['camera_2'][:, :, :, :1]
-                # print(traj_group['camera_2'][:, :, :, :1].shape); quit()
+                traj['heat_inner'] = traj_group['heat_inner'][:]
+                # print(traj_group['hot_inner'].shape); quit()
             else:
                 image_shape = traj_group['camera_0'].shape  # (T, H, W, C)
                 T, H, W = image_shape[:3]
                 traj['obs']['heat'] = np.zeros((T, H, W, 1), dtype=np.uint8)
 
             demos.append(traj)
-            
-        # traj_index = 0
-        # frame_index = 0
-
-        # traj = demos[traj_index]
-        # rgb_frame = traj['obs']['image'][frame_index]        # shape: (H, W, 3)
-        # heat_frame = traj['obs']['heat'][frame_index]        # shape: (H, W, 1) or (H, W)
-
-        # # Ensure heat is squeezed to (H, W)
-        # heat_frame = heat_frame.squeeze()
-
-        # # Normalize if needed
-        # if rgb_frame.dtype != 'uint8':
-        #     rgb_frame = (rgb_frame * 255).astype('uint8')
-        # if heat_frame.dtype != 'uint8':
-        #     heat_frame = (heat_frame * 255).astype('uint8')
-        # import matplotlib.pyplot as plt
-        # # Plot both side-by-side
-        # plt.figure(figsize=(10, 5))
-
-        # plt.subplot(1, 2, 1)
-        # plt.title("RGB Image")
-        # plt.imshow(rgb_frame)
-        # plt.axis("off")
-
-        # plt.subplot(1, 2, 2)
-        # plt.title("Heatmap")
-        # plt.imshow(heat_frame, cmap='hot')
-        # plt.axis("off")
-
-        # plt.tight_layout()
-        # plt.savefig(f"heatmap_{traj_index}_{frame_index}.png"); quit()
-
     return demos
-
 
 def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     dataset_path = config.dataset_path
@@ -327,33 +295,23 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 ]
                 transition["state"] = curr_obs_state_vec
             
-            transition["privileged_state"] = traj['obs']['priv_state'][t]
-            transition["obs_state"] = traj['obs']['priv_state'][t]
-        
             transition["reward"] = np.array(
                 0, dtype=np.float32
             )
             
-            # position and geometry-based check
-            position = traj['obs']['priv_state'][t][:2]
-            obstacle_center = np.array([config.obs_x, config.obs_y])
-            distance = np.linalg.norm(position - obstacle_center)
-            vis_failure = distance < config.obs_r
-
-            # heat-based check
-            heat = traj['obs']['priv_heat'][t]
+            heat_inner = traj["heat_inner"][t]
+            # print(heat_inner.shape); quit()
+            fraction_super_hot = np.sum(heat_inner > 0.8) / heat_inner.size
             
-            if config.heat_mode < 2:
-                heat_failure = heat
-            elif config.heat_mode == 2 or config.heat_mode == 3:
-                heat_failure = heat > config.heat_threshold 
+            heat_failure = fraction_super_hot > 0.04 
+            # transition["obs_state"] = np.array([0.]) # fill with dummy value
+            transition["privileged_state"] = traj['obs']['priv_state'][t]
+            transition["obs_state"] = traj["obs"]["priv_state"][t]
             # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
-            transition["failure"] = vis_failure
             if "heat" in traj['obs']:
                 transition["failure"] = heat_failure
                 
-            # check if state is in obstacle
             transition["is_first"] = np.array(t == 0, dtype=np.bool_)
             transition["is_last"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["is_terminal"] = np.array(traj["dones"][t], dtype=np.bool_)

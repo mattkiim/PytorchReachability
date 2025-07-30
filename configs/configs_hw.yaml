@@ -17,13 +17,11 @@ defaults:
   num_trajs: 42 ## 4000 in paper
   num_train_trajs: 32 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/mattkiim/consolidated.h5' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/hw_sanity'
-  hj_cache_path: 'cache/hj/hw_sanity'
+  dataset_path: '/data/mattkiim/consolidated_hz1.h5' # '128' should be the same as the size above
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/hw'
-  rssm_ckpt_path: 'logs/hw_sanity/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/hw_sanity_4'
+  rssm_ckpt_path: '/data/mattkiim/runs/hw_sanity_4/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -36,7 +34,7 @@ defaults:
   eval_episode_num: 10
   log_every: 2000
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
@@ -57,7 +55,7 @@ defaults:
   dyn_hidden: 512
   dyn_deter: 512
   dyn_stoch: 32
-  dyn_discrete: 32 # 0 for continuous latent
+  dyn_discrete: 0 # 0 for continuous latent
   dyn_rec_depth: 1
   dyn_mean_act: 'none'
   dyn_std_act: 'sigmoid2'
@@ -170,11 +168,6 @@ defaults:
   heat_prop: 0.0 # 0.5
   heat_threshold: 0.8
   fill_cache: True
-  use_wandb: False
-
-  alpha_in: 12
-  alpha_out: 20
-  test: False
 
   include_no_heat_vis: False
   obs_priv_heat: False # whether to use privileged heat in the observation state

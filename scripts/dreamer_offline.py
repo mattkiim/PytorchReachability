@@ -480,8 +480,8 @@ def main(config):
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_eps, config)
 
-    print("Length of training data:", len(expert_eps))
-    print("Length of validation data:", len(expert_val_eps))
+    print("Length of training data:", len(expert_eps)) # 32
+    print("Length of validation data:", len(expert_val_eps)) # 10
 
     print("Simulate agent.")
     agent = Dreamer(
