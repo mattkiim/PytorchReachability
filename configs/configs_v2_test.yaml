@@ -167,12 +167,14 @@ defaults:
   multimodal: True
   aug_rssm: True
   heat_mode: 2
-  heat_prop: 0.5
+  heat_prop: 0.0
   heat_threshold: 0.8
   fill_cache: True
   use_wandb: False
 
   # for training data
-  alpha_in: 3
-  alpha_out: 5
+  alpha_in: 12
+  alpha_out: 20
+  use_pil: True
+  include_outline: False
   test: True

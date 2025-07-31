@@ -452,8 +452,8 @@ class Dreamer(nn.Module):
                     heat = gen.get_heat_frame_v1(img, heat=True)
                     no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif self._config.heat_mode == 2:
-                    rgb = gen.get_rgb_v2(img, self._config, heat=True)
-                    heat, _ = gen.get_heat_frame_v2(rgb, heat=True, heat_value=heat_val)
+                    rgb = gen.get_rgb_v2(img, self._config, heat=True, heat_value=heat_val)
+                    heat, _ = gen.get_heat_frame_v2(rgb, self._config, heat=True, heat_value=heat_val)
                     no_heat = None
                     if self._config.include_no_heat_vis:
                         no_heat, _ = gen.get_heat_frame_v2(rgb, self._config, heat=False, heat_value=heat_val)

@@ -106,14 +106,14 @@ class HeatFrameGenerator:
 
         return heat_frame
     
-    def get_heat_frame_v2(self, img_array, config, heat=True, alpha_in=3, alpha_out=5):
+    def get_heat_frame_v2(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None):
         '''
         partial observability
         
         if you spend too long in unsafe, become different color when exiting (RGB)
         the heat map should be the same as v3
         '''
-        return self.get_heat_frame_v3(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out)
+        return self.get_heat_frame_v3(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out, heat_value=heat_value)
 
     def get_heat_frame_v3(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
       '''
@@ -182,41 +182,77 @@ class HeatFrameGenerator:
       # print(def_temp, heat_value, temp)
       return temp
     
-    def get_rgb_v2(self, img_array, config, heat=True):
-        """
-        partial observability
-        
-        Vehicle turns blue when it enters an obstacle.
-        When it leaves fully, it stays blue (permanent state change).
-        """
-        self._compute_geometry(img_array.shape)
-        obstacle_mask = self._get_mask()
+    def get_rgb_v2(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
+      """
+      Partial observability.
 
-        # Refined vehicle mask
-        vehicle_mask = (
-            (img_array[..., 2:3] > 255/2) & 
-            (img_array[..., 0:1] < 100) & 
-            (img_array[..., 1:2] < 100)
-        )
+      Vehicle builds heat while inside the obstacle, but only displays
+      that heat once it's outside (cannot gain heat outside).
+      """
+      self._compute_geometry(img_array.shape)
+      obstacle_mask = self._get_mask()
+      vehicle_mask = (
+        (img_array[..., 2:3] > 255/2) & 
+        (img_array[..., 0:1] < 100) & 
+        (img_array[..., 1:2] < 100)
+      )
 
-        inside_mask = vehicle_mask & obstacle_mask
-        outside_mask = vehicle_mask & ~obstacle_mask
+      inside_mask = vehicle_mask & obstacle_mask
+      outside_mask = vehicle_mask & ~obstacle_mask
 
-        rgb_out = img_array.copy()
+      rgb_out = img_array.copy()
 
-        if heat:
-            # Set the flag if vehicle touches the obstacle
-            if np.any(inside_mask):
-                self.vehicle_has_entered = True
+      if heat:
+        if heat_value is None:
+          
+          if not np.any(inside_mask) and self.vehicle_temp_rgb < DEFAULT_RGB_VEHICLE_TEMP:
+            temp = self.vehicle_temp_rgb
+            temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+            decay_factor = temp_norm * 0.4
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+                  
+          if not np.any(inside_mask):
+            # self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + alpha_out * 1.2)
+            pass
+          else:
+              self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - alpha_in * 1.2)
+          
+        else:
+          temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
+          temp = np.clip(temp, MIN_RGB_VEHICLE_TEMP, DEFAULT_RGB_VEHICLE_TEMP)
+          
+          if not np.any(inside_mask) and temp < DEFAULT_RGB_VEHICLE_TEMP:
+            temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+            # print(temp, temp_norm, heat_value)
+            decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
+          
+      else:
+          temp = self.vehicle_temp_rgb
+          decay_factor = 0.4 # no decay when no heat
+          light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+          inside_mask = np.squeeze(inside_mask, axis=-1)
+          outside_mask = np.squeeze(outside_mask, axis=-1)
+          rgb_out[inside_mask] = light_blue
+          rgb_out[outside_mask] = light_blue
+          
+      if config.include_outline:
+        from scipy.ndimage import binary_erosion
+        mask = np.squeeze(vehicle_mask, -1)
+        outline = mask ^ binary_erosion(mask)
+        rgb_out[outline] = (0, 0, 0)
 
-            # If vehicle has entered and fully left, change color
-            if self.vehicle_has_entered and not np.any(inside_mask):
-                # Apply a permanent color change (e.g., cyan or light blue)
-                rgb_out[..., 2:3][vehicle_mask] = 255/2  # Custom color
-            else:
-                pass
+      return np.clip(rgb_out, 0, 255).astype(img_array.dtype)
 
-        return rgb_out
+
 
     def get_rgb_v3(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
         """
@@ -420,7 +456,7 @@ def get_frame_pil(states, config, heat_gen, curr_traj_count: int = 0):
             img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
         elif heat_opt == 2:
             img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v2(
-                copy.deepcopy(img_array), heat=hot,
+                np.array(img_array), config, heat=hot,
                 alpha_in=config.alpha_in, alpha_out=config.alpha_out,
             )
             img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
