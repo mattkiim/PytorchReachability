@@ -379,6 +379,7 @@ class Dreamer(nn.Module):
         feat = self._wm.dynamics.get_feat(post).detach().cpu().numpy().squeeze()
 
         return g_x, feat, post
+
     
 def count_steps(folder):
     return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
@@ -478,7 +479,7 @@ def main(config):
     # validation replay buffer
     expert_val_eps = collections.OrderedDict()
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
-    eval_dataset = make_dataset(expert_eps, config)
+    eval_dataset = make_dataset(expert_val_eps, config)
 
     print("Length of training data:", len(expert_eps)) # 32
     print("Length of validation data:", len(expert_val_eps)) # 10
