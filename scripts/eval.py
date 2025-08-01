@@ -1,9 +1,18 @@
+# eval_only.py
 import argparse
 import functools
-import pathlib
-import torch
 import os
+import pathlib
 import sys
+import pickle
+
+os.environ["MUJOCO_GL"] = "osmesa"
+
+import numpy as np
+import ruamel.yaml as yaml
+
+import warnings
+warnings.simplefilter("ignore", category=FutureWarning)
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -11,94 +20,409 @@ dreamer = os.path.abspath(os.path.join(os.path.dirname(__file__), '../dreamerv3-
 sys.path.append(dreamer)
 sys.path.append(str(pathlib.Path(__file__).parent))
 
+import exploration as expl
+import models
 import tools
-from parallel import Parallel, Damy
-from dreamer import Dreamer
-from make_env import make_env
+
+import torch
+from torch import nn
+import collections
+
+from termcolor import cprint
+import matplotlib.pyplot as plt
+from io import BytesIO
+from PIL import Image
+import gym  # If you’ve migrated: `import gymnasium as gym`
+
+to_np = lambda x: x.detach().cpu().numpy()
+from generate_data_traj_cont import get_frame_eval, HeatFrameGenerator
 
 
-def main(config):
+class Dreamer(nn.Module):
+    """Unchanged core; we only use its eval utilities."""
+    def __init__(self, obs_space, act_space, config, logger, dataset):
+        super(Dreamer, self).__init__()
+        self._config = config
+        self._logger = logger
+        self._should_log = tools.Every(config.log_every)
+        batch_steps = config.batch_size * config.batch_length
+        self._should_train = tools.Every(batch_steps / config.train_ratio)
+        self._should_pretrain = tools.Once()
+        self._should_reset = tools.Every(config.reset_every)
+        self._should_expl = tools.Until(int(config.expl_until / config.action_repeat))
+        self._metrics = {}
+        self._step = logger.step // config.action_repeat
+        self._update_count = 0
+        self._dataset = dataset
+
+        self._wm = models.WorldModel(obs_space, act_space, self._step, config)
+        self._task_behavior = models.ImagBehavior(config, self._wm)
+
+        if (config.compile and os.name != "nt"):
+            self._wm = torch.compile(self._wm)
+            self._task_behavior = torch.compile(self._task_behavior)
+
+        # Only needed for exploration policy during rollouts; harmless for eval-only
+        reward = lambda f, s, a: self._wm.heads["reward"](f).mean()
+        self._expl_behavior = dict(
+            greedy=lambda: self._task_behavior,
+            random=lambda: expl.Random(config, act_space),
+            plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
+        )[config.expl_behavior]().to(self._config.device)
+
+        # NOTE: We won’t train here, but keeping this call is harmless.
+        self._make_pretrain_opt()
+
+    def _make_pretrain_opt(self):
+        # Safe to leave as-is; no training will use it.
+        config = self._config
+        use_amp = True if config.precision == 16 else False
+        if (config.rssm_train_steps > 0):
+            standard_kwargs = {
+                "lr": config.model_lr,
+                "eps": config.opt_eps,
+                "clip": config.grad_clip,
+                "wd": config.weight_decay,
+                "opt": config.opt,
+                "use_amp": use_amp,
+            }
+            model_params = {
+                "params": list(self._wm.encoder.parameters())
+                + list(self._wm.dynamics.parameters())
+            }
+            model_params["params"] += list(self._wm.heads["decoder"].parameters())
+            actor_params = {
+                "params": list(self._task_behavior.actor.parameters()),
+                "lr": config.actor["lr"],
+                "eps": config.actor["eps"],
+                "clip": config.actor["grad_clip"],
+            }
+            self.pretrain_params = list(model_params["params"]) + list(
+                actor_params["params"]
+            )
+            self.pretrain_opt = tools.Optimizer(
+                "pretrain_opt", [model_params, actor_params], **standard_kwargs
+            )
+            self.actor_params = list(self._task_behavior.actor.parameters())
+
+    # ---------------------- EVAL UTILITIES (unchanged from your script) ----------------------
+
+    def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
+        wm = self._wm
+        data = wm.preprocess(data)
+        if eval:
+            obs_mlp.eval()
+        with tools.RequiresGrad(obs_mlp):
+            with torch.cuda.amp.autocast(wm._use_amp):
+                embed = wm.encoder(data)
+                post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+                feat = wm.dynamics.get_feat(prior).detach()  # use imagined prior
+                target = torch.Tensor(data["privileged_state"]).to(self._config.device)
+                pred_state = obs_mlp(feat)
+                obs_loss = torch.mean((pred_state - target) ** 2)
+            if not eval:
+                obs_opt(torch.mean(obs_loss), obs_mlp.parameters())
+            else:
+                obs_mlp.train()
+        return obs_loss.item()
+
+    @torch.no_grad()
+    def eval_full_metrics(self, data):
+        wm = self._wm
+        cfg = self._config
+        data = wm.preprocess(data)
+
+        with torch.amp.autocast("cuda", enabled=wm._use_amp):
+            embed = wm.encoder(data)
+            post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+
+            kl_free = cfg.kl_free
+            dyn_scale = cfg.dyn_scale
+            rep_scale = cfg.rep_scale
+            kl_loss_bt, kl_value_bt, dyn_loss_bt, rep_loss_bt = wm.dynamics.kl_loss(
+                post, prior, kl_free, dyn_scale, rep_scale
+            )
+            kl_loss = kl_loss_bt.mean()
+            dyn_loss = dyn_loss_bt.mean()
+            rep_loss = rep_loss_bt.mean()
+            kl_value = kl_value_bt.mean()
+
+            feat = wm.dynamics.get_feat(post)
+
+            preds = {}
+            for name, head in wm.heads.items():
+                pred = head(feat)
+                if isinstance(pred, dict):
+                    preds.update(pred)
+                else:
+                    preds[name] = pred
+
+            per_head_means = {}
+            recon_terms = []
+            cont_loss = torch.tensor(0.0, device=feat.device)
+
+            for name, pred in preds.items():
+                if name == "margin":
+                    continue
+                if name not in data:
+                    continue
+                loss_bt = -pred.log_prob(data[name])  # [B,T]
+                mean_loss = loss_bt.mean()
+                per_head_means[name] = mean_loss
+                if name == "cont":
+                    cont_loss = mean_loss
+                else:
+                    recon_terms.append(mean_loss)
+
+            recon_sum = torch.stack(recon_terms).sum() if len(recon_terms) else torch.tensor(0.0, device=feat.device)
+
+            lx_loss = torch.tensor(0.0, device=feat.device)
+            if "failure" in data:
+                failure = data["failure"]
+                safe_mask = (failure == 0)
+                unsafe_mask = ~safe_mask
+
+                safe_feat = feat[safe_mask]
+                unsafe_feat = feat[unsafe_mask]
+
+                gamma = cfg.gamma_lx
+                if safe_feat.numel() > 0:
+                    pos = wm.heads["margin"](safe_feat)
+                    lx_loss = lx_loss + torch.relu(gamma - pos).mean()
+                if unsafe_feat.numel() > 0:
+                    neg = wm.heads["margin"](unsafe_feat)
+                    lx_loss = lx_loss + torch.relu(gamma + neg).mean()
+                lx_loss = lx_loss * cfg.margin_head["loss_scale"]
+
+            total_eval_loss = recon_sum + lx_loss
+
+            prior_ent = wm.dynamics.get_dist(prior).entropy().mean()
+            post_ent = wm.dynamics.get_dist(post).entropy().mean()
+
+        out = {
+            "recon_sum": to_np(recon_sum),
+            "lx_loss": to_np(lx_loss),
+            "total_loss": to_np(total_eval_loss),
+            "cont_loss": to_np(cont_loss),
+            "kl_loss": to_np(kl_loss),
+            "dyn_loss": to_np(dyn_loss),
+            "rep_loss": to_np(rep_loss),
+            "kl_value": to_np(kl_value),
+            "prior_ent": to_np(prior_ent),
+            "post_ent": to_np(post_ent),
+        }
+        for name, l in per_head_means.items():
+            out[f"recon/{name}"] = to_np(l)
+        return out
+
+    @torch.no_grad()
+    def evaluate_full_metrics(self, dataset, batches=10, prefix="eval"):
+        logs = {}
+        for _ in range(batches):
+            res = self.eval_full_metrics(next(dataset))
+            for k, v in res.items():
+                logs.setdefault(k, []).append(v)
+        means = {k: float(np.mean(vs)) for k, vs in logs.items()}
+        if self._logger is not None:
+            for k, v in means.items():
+                self._logger.scalar(f"{prefix}/{k}", v)
+            self._logger.write(step=self._logger.step)
+        recon_mean = means.get("recon_sum", 0.0)
+        total_mean = means.get("total_loss", recon_mean)
+        return recon_mean, total_mean
+
+
+def count_steps(folder):
+    return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
+
+
+def make_dataset(episodes, config):
+    generator = tools.sample_episodes(episodes, config.batch_length)
+    dataset = tools.from_generator(generator, config.batch_size)
+    return dataset
+
+
+def main(config, ckpt_path=None, eval_batches=None):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
 
     logdir = pathlib.Path(config.logdir).expanduser()
+    config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
+    # Maintain logging schedule but we won't train
     config.steps //= config.action_repeat
     config.eval_every //= config.action_repeat
     config.log_every //= config.action_repeat
     config.time_limit //= config.action_repeat
 
     print("Logdir", logdir)
+    logdir.mkdir(parents=True, exist_ok=True)
+    config.traindir.mkdir(parents=True, exist_ok=True)
     config.evaldir.mkdir(parents=True, exist_ok=True)
-    logger = tools.Logger(logdir, 0)
 
-    print("Create eval envs.")
-    if config.offline_evaldir:
-        directory = config.offline_evaldir.format(**vars(config))
-    else:
-        directory = config.evaldir
-    eval_eps = tools.load_episodes(directory, limit=1)
-    make = lambda mode, id: make_env(config, mode, id)
-    eval_envs = [make("eval", i) for i in range(config.envs)]
-    if config.parallel:
-        eval_envs = [Parallel(env, "process") for env in eval_envs]
-    else:
-        eval_envs = [Damy(env) for env in eval_envs]
-    acts = eval_envs[0].action_space
-    config.num_actions = acts.n if hasattr(acts, "n") else acts.shape[0]
+    # Logger step reflects environment steps (kept for consistency)
+    step = count_steps(config.traindir)
+    logger = tools.Logger(logdir, config.action_repeat * step)
 
-    print("Create agent.")
-    eval_dataset = make_dataset(eval_eps, config)
+    # ------------- Spaces (unchanged) -------------
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
+    bounds = np.array([
+        [config.x_min, config.x_max],
+        [config.y_min, config.y_max],
+        [0, 2 * np.pi],
+        [0, 1],
+    ])
+    low, high = bounds[:, 0], bounds[:, 1]
+    midpoint = (low + high) / 2.0
+    interval = high - low
+    gt_observation_space = gym.spaces.Box(
+        np.float32(midpoint - interval / 2),
+        np.float32(midpoint + interval / 2),
+    )
+
+    image_size = config.size[0]
+    if config.multimodal:
+        if config.aug_rssm:
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+            )
+        else:
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
+            )
+    else:
+        image_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+        )
+
+    if config.obs_priv_heat:
+        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(9,), dtype=np.float32)
+    else:
+        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(8,), dtype=np.float32)
+
+    if config.aug_rssm:
+        heat_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
+        )
+        observation_space = gym.spaces.Dict({
+            'state': gt_observation_space,
+            'obs_state': obs_observation_space,
+            'image': image_observation_space,
+            'heat': heat_observation_space,
+        })
+    else:
+        observation_space = gym.spaces.Dict({
+            'state': gt_observation_space,
+            'obs_state': obs_observation_space,
+            'image': image_observation_space,
+        })
+
+    config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
+
+    # ------------- Load datasets -------------
+    expert_eps = collections.OrderedDict()
+    tools.fill_expert_dataset_dubins(config, expert_eps)
+    expert_dataset = make_dataset(expert_eps, config)
+
+    expert_val_eps = collections.OrderedDict()
+    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
+    eval_dataset = make_dataset(expert_val_eps, config)
+
+    print("Length of training data:", len(expert_eps))
+    print("Length of validation data:", len(expert_val_eps))
+
+    # ------------- Build agent (no training) -------------
     agent = Dreamer(
-        eval_envs[0].observation_space,
-        eval_envs[0].action_space,
+        observation_space,
+        action_space,
         config,
         logger,
-        eval_dataset,
+        expert_dataset,
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
+    agent.eval()
 
-    checkpoint_path = logdir / "latest.pt"
-    if checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path, map_location=config.device)
-        agent.load_state_dict(checkpoint["agent_state_dict"])
-        tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
-        print("Loaded agent from checkpoint.")
-    else:
-        print(f"Checkpoint not found at {checkpoint_path}. Exiting.")
-        return
+    # ------------- Load checkpoint -------------
+    if ckpt_path is None:
+        ckpt_path = logdir / "rssm_ckpt.pt"
+    ckpt_path = pathlib.Path(ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    print("Start evaluation.")
-    eval_policy = functools.partial(agent, training=False)
-    tools.simulate(
-        eval_policy,
-        eval_envs,
-        eval_eps,
-        config.evaldir,
-        logger,
-        is_eval=True,
-        episodes=config.eval_episode_num,
-    )
+    print(f"Loading checkpoint: {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, weights_only=False, map_location=config.device)
+    agent.load_state_dict(checkpoint["agent_state_dict"], strict=False)
+    # Optims are irrelevant for eval
+
+    # ------------- Optional: video predictions on eval set -------------
     if config.video_pred_log:
-        video_pred = agent._wm.video_pred(next(eval_dataset))
-        logger.video("eval_openl", to_np(video_pred))
-
-    for env in eval_envs:
         try:
-            env.close()
-        except Exception:
-            pass
+            if config.multimodal:
+                video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
+                logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
+                logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
+            else:
+                video_pred = agent._wm.video_pred(next(eval_dataset))
+                logger.video("eval_recon/openl_agent", to_np(video_pred))
+            logger.write(step=logger.step)
+        except Exception as e:
+            print("[Warning] video_pred failed:", e)
+
+    # ------------- Eval: probe MLP & full metrics -------------
+    def log_plot(title, data):
+        buf = BytesIO()
+        plt.plot(np.arange(len(data)), data)
+        plt.title(title)
+        plt.savefig(buf, format="png")
+        plt.close()
+        buf.seek(0)
+        plot = Image.open(buf).convert("RGB")
+        plot_arr = np.array(plot)
+        logger.image("eval/" + title, np.transpose(plot_arr, (2, 0, 1)))
+
+    def eval_obs_recon():
+        recon_steps = 101
+        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 8)
+        train_loss, eval_loss = [], []
+        for i in range(recon_steps):
+            if i % int(recon_steps / 4) == 0:
+                new_loss = agent.pretrain_regress_obs(next(eval_dataset), obs_mlp, obs_opt, eval=True)
+                eval_loss.append(new_loss)
+            else:
+                new_loss = agent.pretrain_regress_obs(next(expert_dataset), obs_mlp, obs_opt)
+                train_loss.append(new_loss)
+        log_plot("train_recon_loss", train_loss)
+        log_plot("eval_recon_loss", eval_loss)
+        logger.scalar("eval/train_recon_loss_min", float(np.min(train_loss)))
+        logger.scalar("eval/eval_recon_loss_min", float(np.min(eval_loss)))
+        logger.write(step=logger.step)
+        del obs_mlp, obs_opt
+        return float(np.min(eval_loss))
+
+    # Run both eval passes
+    print("Running evaluation ...")
+    probe_mse = eval_obs_recon()
+    batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
+    recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
+
+    print("\n==== EVAL SUMMARY ====")
+    print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
+    print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
+    print(f"Held-out total_loss mean:  {total_mean:.6f}")
+    print("=======================\n")
 
 
 if __name__ == "__main__":
-    import ruamel.yaml as yaml
-    import sys
-
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", default="configs.yaml", type=str)
     parser.add_argument("--configs", nargs="+")
+    parser.add_argument("--ckpt_path", type=str, default=None, help="Path to a checkpoint (defaults to logdir/latest.pt)")
+    parser.add_argument("--eval_batches", type=int, default=None, help="Override number of held-out eval batches")
     args, remaining = parser.parse_known_args()
-    configs = yaml.safe_load((pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text())
+
+    yaml_loader = yaml.YAML(typ="safe", pure=True)
+    configs = yaml_loader.load((pathlib.Path(sys.argv[0]).parent / f"../{args.config_path}").read_text())
 
     def recursive_update(base, update):
         for key, value in update.items():
@@ -116,4 +440,11 @@ if __name__ == "__main__":
     for key, value in sorted(defaults.items(), key=lambda x: x[0]):
         arg_type = tools.args_type(value)
         parser.add_argument(f"--{key}", type=arg_type, default=arg_type(value))
-    main(parser.parse_args(remaining))
+    cfg = parser.parse_args(remaining)
+
+    # Optional: disable training-specific setup
+    # Ensures we don't even create/consider training loops
+    cfg.rssm_train_steps = 0
+
+    # Run eval-only
+    main(cfg, ckpt_path=args.ckpt_path, eval_batches=args.eval_batches)

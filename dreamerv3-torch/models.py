@@ -253,60 +253,116 @@ class WorldModel(nn.Module):
         # print(obs["image"].shape, obs["heat"].shape); quit()
         return obs
 
-    def video_pred(self, data): # TODO: figure out what this does
-        data = self.preprocess(data)
-        embed = self.encoder(data)
+    def video_pred(self, data):  # ensures each row is from a single traj; freezes at resets
+        """
+        Returns a video grid where each row is one trajectory segment:
+        - Use first `rows` batch items (default 6).
+        - Use first `context` steps as observed/reconstruction.
+        - Use open-loop imagination on future actions until the *next* reset.
+        - If a reset would occur inside the chosen window, we 'freeze' by repeating
+            the last valid frame for the remainder of the time dimension so the row
+            never jumps to another trajectory.
+        Output shape and composition remain identical to the original:
+        return torch.cat([truth, model, error], dim=2)
+        """
+        rows = 6
+        context = 5
 
-        states, _ = self.dynamics.observe(
-            embed[:6, :5], data["action"][:6, :5], data["is_first"][:6, :5]
-        )
-        recon_output = self.heads["decoder"](self.dynamics.get_feat(states)) 
-        recon_image = recon_output["image"].mode()
-        if "heat" in recon_output.keys():
-            recon_heat = recon_output["heat"].mode()
-            # print(recon_image.shape, recon_heat.shape)
-            recon_image = torch.cat([recon_image, recon_heat], dim=-1)
-        recon = recon_image
-        
-        # reward_post = self.heads["reward"](self.dynamics.get_feat(states)).mode()[:6]
-        init = {k: v[:, -1] for k, v in states.items()}
-        prior = self.dynamics.imagine_with_action(data["action"][:6, 5:], init)
-        openl_output = self.heads["decoder"](self.dynamics.get_feat(prior))
-        openl_image = openl_output["image"].mode()
-        if "heat" in openl_output.keys():
-            openl_heat = openl_output["heat"].mode()
-            # print(openl_image.shape, openl_heat.shape); quit()
-            openl_image = torch.cat([openl_image, openl_heat], dim=-1)
-        openl = openl_image
-            
-        # reward_prior = self.heads["reward"](self.dynamics.get_feat(prior)).mode()
-        # observed image is given until 5 steps
-        # print(f"[models/WorldModel/video_pred] recon shape: {recon.shape}")
-        # print(f"[models/WorldModel/video_pred] openl shape: {openl.shape}")
-        model = torch.cat([recon[:, :5], openl], 1)
-        truth = data["image"][:6]
-        
-        # import matplotlib.pyplot as plt
-        # a = truth[0, 0].cpu().numpy() * 255 # shape 224, 224, 3
-        # plt.imshow(a); plt.savefig("truth.png"); quit()
-        
-        
-        if "heat" in data.keys():
-            truth_heat = data["heat"][:6]
-            # print(truth_heat.shape, truth.shape); quit()
-            truth = torch.cat([truth, truth_heat], dim=-1)
-        # print(model.shape, truth.shape); quit() 
-        error = (model - truth + 1.0) / 2.0
-        # print(error.mean())
-        # print(f"[models/WorldModel/video_pred] recon shape: {recon.shape}, {model.shape}")
-        return torch.cat([truth, model, error], 2)
+        wm = self
+        data = wm.preprocess(data)
+
+        # Encode full batch once
+        embed = wm.encoder(data)
+
+        B, T = data["action"].shape[:2]
+        rows = min(rows, B)
+
+        outs = []
+        for b in range(rows):
+            # --- determine valid segment length (until next reset in this row) ---
+            # is_first[b, 0] should be True for the start of this episode.
+            # We look for the next True at t>0 -> that's a reset (new episode).
+            is_first_b = data["is_first"][b]  # shape [T] or [T,1]
+            if is_first_b.ndim > 1:
+                is_first_b = is_first_b.squeeze(-1)
+            is_first_b = is_first_b > 0.5  # to bool
+
+            # Find the next reset after t=0
+            next_reset = torch.nonzero(is_first_b[1:], as_tuple=False)
+            if next_reset.numel() > 0:
+                valid_len = int(next_reset[0].item()) + 1  # +1 to offset slice start
+            else:
+                valid_len = T
+
+            # Context/prediction lengths restricted to this traj segment
+            ctx_len = min(context, valid_len)
+            pred_len = max(0, min(T - context, valid_len - context))
+
+            # --- closed-loop (reconstruction) on the observed context ---
+            states, _ = wm.dynamics.observe(
+                embed[b:b+1, :ctx_len],
+                data["action"][b:b+1, :ctx_len],
+                data["is_first"][b:b+1, :ctx_len],
+            )
+            recon_out = wm.heads["decoder"](wm.dynamics.get_feat(states))
+            recon_img = recon_out["image"].mode()
+            if "heat" in recon_out:
+                recon_heat = recon_out["heat"].mode()
+                recon_img = torch.cat([recon_img, recon_heat], dim=-1)  # concat channels-last
+            recon_seq = recon_img  # [1, ctx_len, H, W, C']
+
+            # --- open-loop imagination for the remainder of this traj segment ---
+            if pred_len > 0:
+                init = {k: v[:, -1] for k, v in states.items()}
+                prior = wm.dynamics.imagine_with_action(
+                    data["action"][b:b+1, context:context + pred_len],
+                    init,
+                )
+                openl_out = wm.heads["decoder"](wm.dynamics.get_feat(prior))
+                openl_img = openl_out["image"].mode()
+                if "heat" in openl_out:
+                    openl_heat = openl_out["heat"].mode()
+                    openl_img = torch.cat([openl_img, openl_heat], dim=-1)
+                model_seq = torch.cat([recon_seq, openl_img], dim=1)  # [1, valid_len, ...]
+            else:
+                model_seq = recon_seq  # valid_len == ctx_len
+
+            # --- freeze beyond the traj boundary so we never show a new traj in this row ---
+            tail_len = T - valid_len
+            if tail_len > 0:
+                last_model = model_seq[:, -1:].repeat(1, tail_len, 1, 1, 1)
+                model_full = torch.cat([model_seq, last_model], dim=1)
+            else:
+                model_full = model_seq  # [1, T, H, W, C']
+
+            # --- ground-truth frames for the same traj segment, then freeze tail ---
+            truth_img = data["image"][b:b+1, :valid_len]
+            if "heat" in data:
+                truth_heat = data["heat"][b:b+1, :valid_len]
+                truth_seq = torch.cat([truth_img, truth_heat], dim=-1)
+            else:
+                truth_seq = truth_img
+
+            if tail_len > 0:
+                last_truth = truth_seq[:, -1:].repeat(1, tail_len, 1, 1, 1)
+                truth_full = torch.cat([truth_seq, last_truth], dim=1)
+            else:
+                truth_full = truth_seq  # [1, T, H, W, C']
+
+            # --- side-by-side error visualization (same normalization as before) ---
+            error_full = (truth_full - model_full) + 0.5
+
+            # Keep the original layout: concat along dim=2 (height) for [truth | model | error]
+            outs.append(torch.cat([truth_full, model_full, error_full], dim=2))
+
+        return torch.cat(outs, dim=0)  # stack the rows back into batch dimension
+
     
     def video_pred_multimodal(self, data):
         video = self.video_pred(data)
         video_rgb = video[..., :3] * 255 # TODO: soft code
         video_heat = video[..., 3:] * 255 # TODO: soft code
         video_heat_3 = torch.cat([video_heat, video_heat, video_heat], dim=-1)
-        # print(video_rgb.shape, video_heat.shape, video.shape); quit()
         return video_rgb, video_heat_3
 
 

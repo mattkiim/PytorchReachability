@@ -14,8 +14,8 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 42 ## 4000 in paper
-  num_train_trajs: 32 ## 3800 in paper
+  num_trajs: 102 ## 4000 in paper
+  num_train_trajs: 92 ## 3800 in paper
   size: [224, 224]
   dataset_path: '/data/mattkiim/consolidated_hz1.h5' # '128' should be the same as the size above
   
