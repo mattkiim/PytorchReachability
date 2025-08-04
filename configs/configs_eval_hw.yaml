@@ -20,8 +20,8 @@ defaults:
   dataset_path: '/data/mattkiim/consolidated_hz1.h5'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: '/data/mattkiim/runs/hw_sanity_discrete0_eq'
-  rssm_ckpt_path: '/data/mattkiim/runs/hw_sanity_discrete0_eq/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/hw_sanity_discrete32_eq_v2'
+  rssm_ckpt_path: '/data/mattkiim/runs/hw_sanity_discrete32_eq_v2/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -34,7 +34,7 @@ defaults:
   eval_episode_num: 10
   log_every: 2000
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
@@ -55,7 +55,7 @@ defaults:
   dyn_hidden: 512
   dyn_deter: 512
   dyn_stoch: 32
-  dyn_discrete: 0 # 0 for continuous latent
+  dyn_discrete: 32 # 0 for continuous latent
   dyn_rec_depth: 1
   dyn_mean_act: 'none'
   dyn_std_act: 'sigmoid2'
@@ -78,10 +78,7 @@ defaults:
     {layers: 2, loss_scale: 1.0, outscale: 1.0}
   # new
   margin_head:
-    # {layers: 2, loss_scale: 10.0, lr: 5e-4, weight_decay: 0.0, warmup_steps: 25000}
-    {layers: 2, loss_scale: 10.0, warmup_steps: 25000}
-
-
+    {layers: 2, loss_scale: 10.0}
   gamma_lx: 0.75 
   dyn_scale: 0.5
   rep_scale: 0.1
@@ -91,8 +88,8 @@ defaults:
   initial: 'learned'
 
   # Training
-  batch_size: 64
-  batch_length: 16
+  batch_size: 16
+  batch_length: 64
   train_ratio: 512
   pretrain: 100
   model_lr: 1e-4

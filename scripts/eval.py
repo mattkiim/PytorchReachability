@@ -105,8 +105,6 @@ class Dreamer(nn.Module):
             )
             self.actor_params = list(self._task_behavior.actor.parameters())
 
-    # ---------------------- EVAL UTILITIES (unchanged from your script) ----------------------
-
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
         wm = self._wm
         data = wm.preprocess(data)
@@ -230,6 +228,207 @@ class Dreamer(nn.Module):
         recon_mean = means.get("recon_sum", 0.0)
         total_mean = means.get("total_loss", recon_mean)
         return recon_mean, total_mean
+    
+    @torch.no_grad()
+    def _decode_all_heads(self, feat):
+        """
+        Distribution heads -> .mode()
+        Tensor heads (e.g., 'margin') -> raw tensor
+        """
+        outs = {}
+        for name, head in self._wm.heads.items():
+            pred = head(feat)
+            if isinstance(pred, dict):
+                for k, dist in pred.items():
+                    outs[k] = dist.mode() if hasattr(dist, "mode") else dist
+            else:
+                if isinstance(pred, torch.Tensor):
+                    outs[name] = pred
+                elif hasattr(pred, "mode"):
+                    outs[name] = pred.mode()
+                else:
+                    raise TypeError(
+                        f"Head '{name}' returned unsupported type: {type(pred)}"
+                    )
+        return outs
+
+    @torch.no_grad()
+    def rollout_16_warm5(self, batch, mode="open", actor_mode=True):
+        """
+        Hybrid rollout of length 16:
+        - first 5 steps: posterior updates with GT embeds + (GT actions)  -> 'warm'
+        - next 11 steps: imagined steps
+            * open:   use dataset actions
+            * closed: use actor actions
+        Returns per-head MSEs (all 16 and imag-only) and margin stats. NO videos.
+        """
+        assert mode in ("open", "closed")
+        H, WARM = 16, 5
+        FUT = H - WARM
+
+        wm = self._wm
+        cfg = self._config
+        data = wm.preprocess(batch)  # dict of [B,T,...]
+        B, T = data["action"].shape[:2]
+        assert T >= H + 1, "Need at least H+1 timesteps in the batch."
+
+        t0 = T - (WARM + FUT) - 1
+        t0 = max(0, t0)
+
+        # Encode whole sequence to get posterior states (for warm steps)
+        embed = wm.encoder(data)
+        post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
+
+        # Warm decoded reconstructions (posterior)
+        warm_states = {k: v[:, t0 + 1 : t0 + 1 + WARM] for k, v in post.items()}
+        warm_feat   = wm.dynamics.get_feat(warm_states)
+        warm_dec    = self._decode_all_heads(warm_feat)  # dict of tensors [B,WARM,...]
+
+        # Prepare starting state for imagination
+        curr = {k: v[:, t0 + WARM] for k, v in post.items()}
+
+        # Imagine FUT steps
+        if mode == "open":
+            a_seq   = data["action"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]  # [B,FUT,A]
+            prior   = wm.dynamics.imagine_with_action(a_seq, curr)            # dict of [B,FUT,...]
+            imag_feat = wm.dynamics.get_feat(prior)                           # [B,FUT,F]
+            imag_dec  = self._decode_all_heads(imag_feat)                     # dict of [B,FUT,...]
+        else:
+            # Closed-loop: actor picks actions step-by-step
+            actor = self._task_behavior.actor
+            feats = []
+            c = curr
+            for _ in range(FUT):
+                feat_t = wm.dynamics.get_feat(c)            # [B, F]
+                dist   = actor(feat_t)
+                a_t    = dist.mode() if actor_mode else dist.sample()  # [B, A]
+                c      = wm.dynamics.img_step(c, a_t, sample=True)     # next state
+                feats.append(wm.dynamics.get_feat(c))       # features for next state
+
+            # Stack across time and decode once (now shapes are [B, FUT, F])
+            imag_feat = torch.stack(feats, dim=1)           # [B, FUT, F]
+            imag_dec  = self._decode_all_heads(imag_feat)   # dict of [B, FUT, ...]
+            
+        # Concatenate warm + imag for outputs where it makes sense
+        full_dec = {}
+        for k in set(warm_dec.keys()).union(set(imag_dec.keys())):
+            w = warm_dec.get(k, None)
+            i = imag_dec.get(k, None)
+            if w is not None and i is not None:
+                full_dec[k] = torch.cat([w, i], dim=1)  # [B,16,...]
+            elif w is not None:
+                full_dec[k] = w
+            elif i is not None:
+                full_dec[k] = i
+
+        # Targets for comparison (ground-truth slice [t0+1 .. t0+H])
+        targets = {}
+        for k in ("image", "heat", "obs_state"):
+            if k in data:
+                targets[k] = data[k][:, t0 + 1 : t0 + 1 + H]  # [B,16,...]
+
+        # MSE over all 16 and imag-only (last FUT)
+        mse_all, mse_imag = {}, {}
+        for k, tgt in targets.items():
+            if k in full_dec and full_dec[k] is not None:
+                mse_all[k]  = torch.mean((full_dec[k] - tgt) ** 2).item()
+                mse_imag[k] = torch.mean((full_dec[k][:, WARM:] - tgt[:, WARM:]) ** 2).item()
+
+        # Safety margin statistics for imagined part
+        margin_vals = self._wm.heads["margin"](imag_feat)  # [B,FUT,1] or [B,FUT]
+        margin_mean = margin_vals.mean().item()
+        frac_unsafe = (margin_vals < cfg.gamma_lx).float().mean().item()
+
+        return {
+            "mse_all": mse_all,
+            "mse_imag": mse_imag,
+            "margin_mean_imag": margin_mean,
+            "frac_unsafe_imag": frac_unsafe,
+        }
+        
+    @torch.no_grad()
+    def confusion_16_warm5(self, batch, mode="open", actor_mode=True):
+        """
+        Like rollout_16_warm5 but only returns confusion counts over the 11 imagined steps.
+        Positive class = 'unsafe' (failure == 1). Prediction = (margin < gamma_lx).
+        Returns: dict(TP=..., TN=..., FP=..., FN=..., total=...)
+        """
+        assert mode in ("open", "closed")
+        H, WARM = 16, 5
+        FUT = H - WARM
+
+        wm = self._wm
+        cfg = self._config
+        data = wm.preprocess(batch)  # dict of [B, T, ...]
+        if "failure" not in data:
+            raise KeyError("Batch is missing 'failure' labels; cannot compute TP/TN/FP/FN.")
+        B, T = data["action"].shape[:2]
+        assert T >= H + 1, "Need at least H+1 timesteps in the batch."
+
+        # choose start index so that [t0+1..t0+WARM] are warm steps, and [t0+WARM+1..WARM+FUT] are imagined steps
+        t0 = max(0, T - (WARM + FUT) - 1)
+
+        # Posterior from full sequence for warm steps
+        embed = wm.encoder(data)
+        post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+
+        # Starting state at the boundary
+        curr = {k: v[:, t0 + WARM] for k, v in post.items()}
+
+        # Imagine FUT steps
+        if mode == "open":
+            a_seq = data["action"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
+            prior = wm.dynamics.imagine_with_action(a_seq, curr)
+            imag_feat = wm.dynamics.get_feat(prior)
+        else:
+            cl_states = {k: v[:, t0 + WARM + 1 : t0 + WARM + 1 + FUT] for k, v in post.items()}
+            imag_feat = wm.dynamics.get_feat(cl_states)
+
+        # Predicted (unsafe=1) if margin < gamma
+        margin = self._wm.heads["margin"](imag_feat)
+        margin = margin.squeeze(-1) if margin.dim() == 3 else margin
+        pred_unsafe = (margin < cfg.gamma_lx)
+
+        # Ground-truth (unsafe=1)
+        gt = data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
+        gt_unsafe = (gt > 0.5)
+        
+        # Confusion counts
+        TP = torch.sum(~pred_unsafe & ~gt_unsafe).item()
+        TN = torch.sum(pred_unsafe & gt_unsafe).item()
+        FP = torch.sum(~pred_unsafe & gt_unsafe).item()
+        FN = torch.sum(pred_unsafe & ~gt_unsafe).item()
+        total = int(pred_unsafe.numel())
+        return dict(TP=int(TP), TN=int(TN), FP=int(FP), FN=int(FN), total=total)
+
+
+    @torch.no_grad()
+    def eval_confusion_from_batches(self, batches, mode="open", actor_mode=True, log_prefix=None,
+                                   fpr_over_total=True):
+        """
+        Use a pre-fetched list of batches so OL and CL evaluate on the *same* samples.
+        Aggregates TP/TN/FP/FN over all batches, computes metrics, and (optionally) logs.
+        """
+        agg = dict(TP=0, TN=0, FP=0, FN=0, total=0)
+        for batch in batches:
+            res = self.confusion_16_warm5(batch, mode=mode, actor_mode=actor_mode)
+            for k in agg: agg[k] += res[k]
+
+        TP, TN, FP, FN, N = agg["TP"], agg["TN"], agg["FP"], agg["FN"], agg["total"]
+        # Your requested definition: FPR = FP / total
+        tpr = TP / N
+        tnr = TN / N
+        fpr = FP / N
+        fnr = FN / N
+            
+        out = {**agg, "tpr": tpr, "tnr": tnr, "fpr": fpr, "fnr": fnr}
+
+        if self._logger is not None and log_prefix:
+            for k, v in out.items():
+                self._logger.scalar(f"{log_prefix}/{k}", float(v))
+            self._logger.write(step=self._logger.step)
+
+        return out
 
 
 def count_steps(folder):
@@ -345,7 +544,7 @@ def main(config, ckpt_path=None, eval_batches=None):
 
     # ------------- Load checkpoint -------------
     if ckpt_path is None:
-        ckpt_path = logdir / "rssm_ckpt.pt"
+        ckpt_path = config.rssm_ckpt_path
     ckpt_path = pathlib.Path(ckpt_path)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -405,6 +604,58 @@ def main(config, ckpt_path=None, eval_batches=None):
     probe_mse = eval_obs_recon()
     batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
     recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
+    
+    # # ------------- Eval: OL and CL rollouts -------------
+    # # ---- Hybrid 16-step eval (5 warm + 11 imagine) ----
+    # batch_eval = next(eval_dataset)  # needs T >= 17 inside the batch
+
+    # # Open-loop (uses dataset actions for imagined steps)
+    # res_open = agent.rollout_16_warm5(batch_eval, mode="open")
+
+    # # Closed-loop (actor picks actions for imagined steps)
+    # res_close = agent.rollout_16_warm5(batch_eval, mode="closed", actor_mode=True)
+
+    # # Log scalars
+    # for k, v in res_open["mse_all"].items():
+    #     logger.scalar(f"hybrid16_open/mse_all_{k}", float(v))
+    # for k, v in res_open["mse_imag"].items():
+    #     logger.scalar(f"hybrid16_open/mse_imag_{k}", float(v))
+    # logger.scalar("hybrid16_open/margin_mean_imag", float(res_open["margin_mean_imag"]))
+    # logger.scalar("hybrid16_open/frac_unsafe_imag", float(res_open["frac_unsafe_imag"]))
+
+    # for k, v in res_close["mse_all"].items():
+    #     logger.scalar(f"hybrid16_closed/mse_all_{k}", float(v))
+    # for k, v in res_close["mse_imag"].items():
+    #     logger.scalar(f"hybrid16_closed/mse_imag_{k}", float(v))
+    # logger.scalar("hybrid16_closed/margin_mean_imag", float(res_close["margin_mean_imag"]))
+    # logger.scalar("hybrid16_closed/frac_unsafe_imag", float(res_close["frac_unsafe_imag"]))
+    
+    # # Also print a short console summary
+    # print("Hybrid16 (open):", res_open)
+    # print("Hybrid16 (closed):", res_close)
+    
+    # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
+    n_windows = 50  # number of windows you want to evaluate
+    shared_batches = [next(eval_dataset) for _ in range(n_windows)]
+
+    # Open-loop on shared samples
+    open_stats  = agent.eval_confusion_from_batches(
+        shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
+    )
+    # Closed-loop on the exact same samples
+    closed_stats = agent.eval_confusion_from_batches(
+        shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
+    )
+
+    print("\n=== Confusion (Open, same samples) ===")
+    for k, v in open_stats.items():
+        print(f"{k}: {v}")
+
+    print("\n=== Confusion (Closed, same samples) ===")
+    for k, v in closed_stats.items():
+        print(f"{k}: {v}")
+    
+    logger.write(step=logger.step)
 
     print("\n==== EVAL SUMMARY ====")
     print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
