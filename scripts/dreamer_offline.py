@@ -227,6 +227,7 @@ class Dreamer(nn.Module):
         wm = self._wm
         actor = self._task_behavior.actor
         data = wm.preprocess(data)
+        # print(data['obs_state'].shape); quit()
         
         with tools.RequiresGrad(wm), tools.RequiresGrad(actor):
             with torch.amp.autocast("cuda", enabled=wm._use_amp):
@@ -385,11 +386,13 @@ class Dreamer(nn.Module):
         self.safe_idxs = data["safe_idxs"]
         self.unsafe_idxs = data["unsafe_idxs"]
         self.theta_lin = data["theta_lin"]
+        self.velocity_lin = data["vel_lin"]
         self.imgs = data["imgs"]
         self.heat_imgs = data["heat"]
         self.no_heat_imgs = data["no_heat"]
         self.v = np.zeros((self._config.nx, self._config.ny, 3))
         self.nz = 3  # assuming fixed
+        self.nv = 3
 
         print(f"Cache loaded from {cache_path}")
         
@@ -399,12 +402,14 @@ class Dreamer(nn.Module):
         if cache_path is None:
             raise NameError("No cache_path")
 
-        nx, ny, nz = self._config.nx, self._config.ny, 3
+        nx, ny, nz, nv = self._config.nx, self._config.ny, 3, 3
         self.nz = nz
-        self.v = np.zeros((nx, ny, nz))
+        self.nv = nv
+        self.v = np.zeros((nx, ny, nz, nv))
         xs = np.linspace(self._config.x_min, self._config.x_max, nx)
         ys = np.linspace(self._config.y_min, self._config.y_max, ny)
         thetas = np.linspace(0, 2 * np.pi, nz, endpoint=True)
+        vels = np.linspace(0, 1, nv, endpoint=True)
 
         all_rgb_imgs = {}
         all_heat_imgs = {}
@@ -419,6 +424,8 @@ class Dreamer(nn.Module):
             x = xs[idx[0]]
             y = ys[idx[1]]
             theta = thetas[idx[2]]
+            vel = vels[idx[3]]
+            
             x -= np.cos(theta) * 0.05
             y -= np.sin(theta) * 0.05
 
@@ -481,6 +488,7 @@ class Dreamer(nn.Module):
         self.safe_idxs = np.where(np.array(labels) == 0)
         self.unsafe_idxs = np.where(np.array(labels) == 1)
         self.theta_lin = thetas[idxs[:, 2]]
+        self.velocity_lin = vels[idxs[:, 3]]
         self.imgs = all_rgb_imgs
         self.heat_imgs = all_heat_imgs
         self.no_heat_imgs = all_no_heat_imgs
@@ -493,6 +501,7 @@ class Dreamer(nn.Module):
                 "safe_idxs": self.safe_idxs,
                 "unsafe_idxs": self.unsafe_idxs,
                 "theta_lin": self.theta_lin,
+                "vel_lin": self.velocity_lin,
                 "imgs": all_rgb_imgs,
                 "heat": all_heat_imgs,
                 "no_heat": all_no_heat_imgs,
@@ -500,17 +509,18 @@ class Dreamer(nn.Module):
             }, f)
         print(f"Cache saved to {cache_file}")
 
-    def get_latent(self, thetas, heat_value, imgs, heat, no_heat, heat_bool=False):
+    def get_latent(self, thetas, vels, heat_value, imgs, heat, no_heat, heat_bool=False):
         states = np.expand_dims(np.expand_dims(thetas,1),1)
+        vels = np.expand_dims(np.expand_dims(vels, 1), 1) 
         imgs = np.expand_dims(imgs, 1)
         heat = heat if heat_bool else no_heat
         heat = np.expand_dims(heat, 1)
         # print(f"[dreamer_offline/Dreamer/get_latent] heat: {heat.mean()}")
         # print(imgs.shape); quit()
-        dummy_acs = np.zeros((np.shape(thetas)[0], 1))
-        dummy_acs[np.arange(np.shape(thetas)[0]), :] = 0.
-        firsts = np.ones((np.shape(thetas)[0], 1))
-        lasts = np.zeros((np.shape(thetas)[0], 1))
+        batch_size = np.shape(thetas)[0]
+        dummy_acs = np.zeros((batch_size, 1, 2)) 
+        firsts = np.ones((batch_size, 1))
+        lasts = np.zeros((batch_size, 1))
         
         cos = np.cos(states)
         sin = np.sin(states)
@@ -520,7 +530,7 @@ class Dreamer(nn.Module):
         if self._config.obs_priv_heat:
             states = np.concatenate([cos, sin, heat_values], axis=-1)
         else:
-            states = np.concatenate([cos, sin], axis=-1)
+            states = np.concatenate([cos, sin, vels], axis=-1)
             
         data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
         # if self._config.include_no_heat_vis:
@@ -528,6 +538,10 @@ class Dreamer(nn.Module):
             
         data = self._wm.preprocess(data)
         embed = self._wm.encoder(data)
+        
+        # for k, v in data.items():
+        #     print(f"{k}: {v.shape}")
+        # quit()
 
         post, prior = self._wm.dynamics.observe(
             embed, data["action"], data["is_first"]
@@ -541,17 +555,17 @@ class Dreamer(nn.Module):
 
     def get_eval_plot(self, heat_values=[0.2, 0.4, 0.6, 0.8]):
         self.eval()
-        
+
         titles = ['w/ Heat', 'w/o Heat'] if self._config.include_no_heat_vis else ['w/ Heat']
         num_modes = 2 if self._config.include_no_heat_vis else 1
         num_heat = len(heat_values)
 
         fig, axes = plt.subplots(
-            self.nz, num_heat * num_modes * 2,
-            figsize=(6 * num_heat * num_modes, self.nz * 6)
+            self.nv, num_heat * num_modes * 2,
+            figsize=(6 * num_heat * num_modes, self.nv * 6)
         )
 
-        if self.nz == 1:
+        if self.nv == 1:
             axes = np.expand_dims(axes, axis=0)
 
         metrics_summary = []
@@ -566,22 +580,30 @@ class Dreamer(nn.Module):
             cbar.ax.set_yticklabels([vmin, 0, vmax], fontsize=10)
 
         for h_idx, heat_val in enumerate(heat_values):
-            # Get both modes: cold (no heat) and hot (heat)
-            g_x_hot, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=True)
+            thetas = np.zeros_like(self.velocity_lin)  # Fix angle = 0
+            g_x_hot, _, _ = self.get_latent(
+                thetas, self.velocity_lin, heat_val,
+                self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val),
+                heat_bool=True
+            )
             g_x_list = [np.array(g_x_hot)]
+
             if self._config.include_no_heat_vis:
-                g_x_cold, _, _ = self.get_latent(self.theta_lin, heat_val, self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val), heat_bool=False)
+                g_x_cold, _, _ = self.get_latent(
+                    thetas, self.velocity_lin, heat_val,
+                    self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val),
+                    heat_bool=False
+                )
                 g_x_list = [np.array(g_x_hot), np.array(g_x_cold)]
 
             vmax_all = [round(max(np.max(gx), 0), 1) for gx in g_x_list]
             vmin_all = [round(min(np.min(gx), -v), 1) for gx, v in zip(g_x_list, vmax_all)]
 
             for mode_idx, g_x in enumerate(g_x_list):
-                # Fill into full 3D grid: (x, y, θ)
-                self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
-                v = self.v
+                # Fill into (x, y, velocity) grid
+                self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 3]] = g_x
+                v = self.v  # shape (nx, ny, nv)
 
-                # Classification metrics
                 tp = np.where(g_x[self.safe_idxs] > 0)
                 fn = np.where(g_x[self.safe_idxs] <= 0)
                 fp = np.where(g_x[self.unsafe_idxs] > 0)
@@ -595,7 +617,7 @@ class Dreamer(nn.Module):
                 vmin = vmin_all[mode_idx]
                 vmax = vmax_all[mode_idx]
 
-                for i in range(self.nz):
+                for i in range(self.nv):
                     col_base = h_idx * num_modes * 2 + mode_idx * 2
                     ax1 = axes[i, col_base]
                     ax2 = axes[i, col_base + 1]
@@ -606,7 +628,7 @@ class Dreamer(nn.Module):
                         origin="lower", cmap="seismic", vmin=vmin, vmax=vmax, zorder=-1
                     )
                     draw_colorbar(im1, ax1, vmin, vmax)
-                    ax1.set_title(f"$g(x)$ {titles[mode_idx]}\nHeat={heat_val}", fontsize=12)
+                    ax1.set_title(f"$g(x)$ {titles[mode_idx]}\nHeat={heat_val}  Vel={self.velocity_lin[i]:.2f}", fontsize=12)
                     draw_circle(ax1)
 
                     im2 = ax2.imshow(
@@ -615,7 +637,7 @@ class Dreamer(nn.Module):
                         origin="lower", cmap="seismic", vmin=-1, vmax=1, zorder=-1
                     )
                     draw_colorbar(im2, ax2, -1, 1)
-                    ax2.set_title(f"$v(x)$ {titles[mode_idx]}\nHeat={heat_val}", fontsize=12)
+                    ax2.set_title(f"$v(x)$ {titles[mode_idx]}\nHeat={heat_val}  Vel={self.velocity_lin[i]:.2f}", fontsize=12)
                     draw_circle(ax2)
 
         fig.tight_layout(rect=[0, 0.05, 1, 0.95])
@@ -667,9 +689,8 @@ def main(config):
     logger = tools.Logger(logdir, config.action_repeat * step)
 
     print("Create environments") 
-    action_space = gym.spaces.Box(
-        low=-config.turnRate, high=config.turnRate, shape=(1,), dtype=np.float32
-    )
+    action_space = gym.spaces.Box(low=np.array([-1.0, -0.1]), high=np.array([1.0, 0.1]), shape=(2,), dtype=np.float32)
+
     bounds = np.array([[config.x_min, config.x_max], [config.y_min, config.y_max], [0, 2 * np.pi], [0, 1]])
     low = bounds[:, 0]
     high = bounds[:, 1]
@@ -699,11 +720,11 @@ def main(config):
 
     if config.obs_priv_heat:
         obs_observation_space = gym.spaces.Box(
-            low=-1, high=1, shape=(3,), dtype=np.float32
+            low=-1, high=1, shape=(4,), dtype=np.float32
         )
     else:
         obs_observation_space = gym.spaces.Box(
-            low=-1, high=1, shape=(2,), dtype=np.float32
+            low=-1, high=1, shape=(3,), dtype=np.float32
         )
     
     if config.aug_rssm:
@@ -793,7 +814,7 @@ def main(config):
         
     def eval_obs_recon():
         recon_steps = 101
-        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 3)
+        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 4)
         train_loss = []
         eval_loss = []
         for i in range(recon_steps):

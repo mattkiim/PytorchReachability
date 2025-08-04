@@ -202,9 +202,17 @@ class HeatFrameGenerator:
 
       rgb_out = img_array.copy()
 
+      temp = DEFAULT_RGB_VEHICLE_TEMP
+      temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
+      decay_factor = temp_norm * 0.4
+      light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+      inside_mask_og = np.squeeze(inside_mask, axis=-1)
+      outside_mask_og = np.squeeze(outside_mask, axis=-1)
+      rgb_out[inside_mask_og] = light_blue
+      rgb_out[outside_mask_og] = light_blue
+
       if heat:
         if heat_value is None:
-          
           if not np.any(inside_mask) and self.vehicle_temp_rgb < DEFAULT_RGB_VEHICLE_TEMP:
             temp = self.vehicle_temp_rgb
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
@@ -614,9 +622,9 @@ def get_frame_eval(states, config):
 
 def get_init_state(config):
   # don't sample inside the failure set
-  states = torch.zeros(3)
+  states = torch.zeros(4)
   while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
-    states = torch.rand(3)
+    states[:3] = torch.rand(3)
     
     states[0] *= (config.x_max-config.buffer) - (config.x_min + config.buffer)
     states[1] *= (config.y_max-config.buffer) - (config.y_min + config.buffer)
@@ -627,10 +635,15 @@ def get_init_state(config):
   states[2] = torch.atan2(-states[1], -states[0]) + np.random.normal(0, 1)
   states[2] = states[2] % (2*np.pi)
   
+  v_min = getattr(config, 'v_min', 0.0)
+  v_max = getattr(config, 'v_max', 1.0)
+  states[3] = torch.rand(1) * (v_max - v_min) + v_min
+  
   if config.test:
     states[0] = -0.8 # TODO: comment out
     states[1] = 0.
     states[2] = 0.
+    states[3] = 1.
     
   return states
 
@@ -647,21 +660,33 @@ def gen_one_traj_img(config, curr_traj_count=0):
   u_max = final_config.turnRate
   dt = config.dt
   v = config.speed
+  v_min = getattr(config, 'v_min', 0.0)
+  v_max = getattr(config, 'v_max', 1.0)
 
   heat_gen = HeatFrameGenerator(config)
   heat_gen.reset_vehicle_heat()
   
   for t in range(config.data_length):
     # random between -u_max and u_max
-    ac = torch.rand(1) * 2 * u_max - u_max
     if config.test:
-      ac = torch.tensor(0)
+      ac = torch.tensor([0, 0])
+    else: 
+      steer_rate = torch.rand(1) * 2 * u_max - u_max                  # [-u_max, u_max]
+      lin_accel = 0.1 * (2 * torch.randint(0, 2, (1,)).float() - 1)
+      ac = torch.cat([steer_rate, lin_accel], dim=0)
     
-    # dubin's dynamics
-    states_next = torch.rand(3)
-    states_next[0] = states[0] + v*dt*torch.cos(states[2])
-    states_next[1] = states[1] + v*dt*torch.sin(states[2])
-    states_next[2] = states[2] + dt*ac
+    x, y, theta, v = states
+
+    # Update velocity using linear acceleration
+    v_new = torch.clamp(v + ac[1] * dt, v_min, v_max)
+
+    # Apply Dubins dynamics with updated velocity
+    x_next = x + v_new * dt * torch.cos(theta)
+    y_next = y + v_new * dt * torch.sin(theta)
+    theta_next = theta + ac[0] * dt
+    theta_next = theta_next % (2 * np.pi)  # Wrap angle
+    states_next = torch.stack([x_next, y_next, theta_next, v_new])
+
 
     # the data is (o_t, a_t), don't observe o_t+1 yet
     if t == config.data_length-1:
@@ -680,20 +705,18 @@ def gen_one_traj_img(config, curr_traj_count=0):
       img_array, hot, vehicle_temp = get_frame(states, config, heat_gen, curr_traj_count=curr_traj_count)
     norm_temp = 1. - vehicle_temp / DEFAULT_VEHICLE_TEMP
     
-    state_obs.append(states[2].numpy())
-    # print(state_obs); quit()
-    
+    state_obs.append(states[[2, 3]].numpy())
     state_gt.append(states.numpy()) # gt state for debugging
+    
     if config.multimodal: 
       img_obs.append(img_array[..., :3]) # TODO: turn into dict and grab
-      # print(img_array[..., -1:].mean()); quit()
       heat_obs.append(img_array[..., -1:])
-      # print(vehicle_temp / DEFAULT_VEHICLE_TEMP)
       heat_gt.append(norm_temp) # TODO: store this in a variable
     else: 
       img_obs.append(img_array)
       heat_obs.append(img_array[..., 0] * 0)
-      heat_gt.append(0.0) # TODO: should also be vehicle_temp / DEFAULT_VEHICLE_TEMP
+      heat_gt.append(0.0)
+      
     states = states_next
     if dones[-1] == 1:
       break
@@ -704,6 +727,7 @@ def generate_trajs(config):
   curr_traj_count = 0
   for i in range(config.num_trajs):
     state_obs, acs, state_gt, img_obs, heat_obs, heat_gt, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
+    # print(state_obs[0].shape)
     # print(np.mean(img_obs), np.mean(heat_obs)); quit()
     demo = {}
     demo['obs'] = {'image': img_obs, 'heat': heat_obs, 'priv_heat': heat_gt, 'state': state_obs, 'priv_state': state_gt}

@@ -14,11 +14,13 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 4000 ## 4000 in paper
-  num_train_trajs: 3800 ## 3800 in paper
+  num_trajs: 2000 ## 4000 in paper
+  num_train_trajs: 1900 ## 3800 in paper
   size: [128, 128]
   dataset_path: 'train_data/wm_demos128_multimodal_v2plus' # '128' should be the same as the size above
-  cache_path: 'cache/cache_v2plus.pkl'
+  wm_cache_path: 'cache/wm/cache_v2plus.pkl'
+  hj_cache_path: 'cache/hj/cache_v2plus.pkl'
+  ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv2-torch
   logdir: 'logs/dreamer_dubins_multimodal_v2plus'
@@ -160,17 +162,20 @@ defaults:
   kwargs: {} # type=str, default='{}')
   warm-start-path: null # type=str, default=None) # e.g., log/ra_droneracing_Game-v6/epoch_id_10/policy.pth
 
-  nx: 41
-  ny: 41
+  nx: 31
+  ny: 31
 
   multimodal: True
   aug_rssm: True
   heat_mode: 2
-  heat_prop: 0.5
+  heat_prop: 0.0
   heat_threshold: 0.8
   fill_cache: True
-  use_wandb: False
+  obs_priv_heat: False
+  include_no_heat_vis: False
 
-  alpha_in: 3
-  alpha_out: 5
+  alpha_in: 12
+  alpha_out: 20
+  use_pil: True
+  include_outline: False
   test: False

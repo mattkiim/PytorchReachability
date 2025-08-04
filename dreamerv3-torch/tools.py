@@ -71,7 +71,7 @@ class Logger:
 
         name = str(logdir).split('/')[-2] + '_' + str(logdir).split('/')[-1]
         # Initialize WandB
-        wandb.init(project="eaishw2", config={"logdir": str(logdir)}, name=name)
+        wandb.init(project="po_toast", config={"logdir": str(logdir)}, name=name)
 
     def config(self, config_dict):
         # Convert PosixPath objects to strings
@@ -240,9 +240,9 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             transition["privileged_state"] = traj['obs']['priv_state'][t]
             
             if config.obs_priv_heat:
-                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t]), traj['obs']['priv_heat'][t]]
+                transition["obs_state"] = [np.cos(traj['obs']['state'][t][0]), np.sin(traj['obs']['state'][t][0]), traj['obs']['state'][t][1], traj['obs']['priv_heat'][t]]
             else:
-                transition["obs_state"] = [np.cos(traj['obs']['state'][t]), np.sin(traj['obs']['state'][t])]
+                transition["obs_state"] = [np.cos(traj['obs']['state'][t][0]), np.sin(traj['obs']['state'][t][0]), traj['obs']['state'][t][1]]
         
             transition["reward"] = np.array(
                 0, dtype=np.float32
@@ -272,6 +272,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             transition["is_last"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["is_terminal"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["discount"] = np.array(1, dtype=np.float32)
+            # print(traj["actions"][t]); quit()
             transition["action"] = np.array(traj["actions"][t], dtype=np.float32)
             add_to_cache(cache, f"exp_traj_{i}", transition)
             

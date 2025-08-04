@@ -25,10 +25,10 @@ class Dubins_WM_Env(gym.Env):
         self.render_mode = None
         self.time_step = 0.05
         self.high = np.array([
-            1.5, 1.5, np.pi,
+            1.5, 1.5, np.pi, 1.
         ])
         self.low = np.array([
-            -1.5, -1.5, -np.pi
+            -1.5, -1.5, -np.pi, 0.
         ])
         self.device = 'cuda:0'
         self.device = config.device if hasattr(config, 'device') else self.device
@@ -38,8 +38,8 @@ class Dubins_WM_Env(gym.Env):
                 low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
             )
         obs_space = gym.spaces.Box(
-                low=-1., high=1., shape=(2,), dtype=np.float32
-            )
+            low=np.array([-1., -1, 0.]), high=np.array([1., 1., 1.]), shape=(3,), dtype=np.float32
+        )
         bool_space = gym.spaces.Box(
                 low=0., high=1., shape=(1,)
             )
@@ -50,7 +50,7 @@ class Dubins_WM_Env(gym.Env):
             'is_last': bool_space,
             'is_terminal': bool_space,
         })
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32) # joint action space
+        self.action_space = spaces.Box(low=np.array([-1.0, -0.1]), high=np.array([1.0, 0.1]), shape=(2,), dtype=np.float32)
         self.image_size=config.size[0]
         self.turnRate = config.turnRate
 
@@ -67,10 +67,17 @@ class Dubins_WM_Env(gym.Env):
     
     def step(self, action):
         init = {k: v[:, -1] for k, v in self.latent.items()}
-        ac_torch = torch.tensor([[action]], dtype=torch.float32).to(self.device)*self.turnRate
-        self.latent = self.wm.dynamics.imagine_with_action(ac_torch, init)
-        rew, cont = self.safety_margin(self.latent) # rew is negative if unsafe
-        
+        action = np.clip(action, self.action_space.low, self.action_space.high)
+        steer = action[0] * self.turnRate  # [-turnRate, +turnRate]
+        accel = action[1] * 0.2  # scale acceleration (tune as needed)
+
+        action_tensor = torch.tensor([[steer, accel]], dtype=torch.float32).to(self.device)
+        self.latent = self.wm.dynamics.imagine_with_action(action_tensor, {k: v[:, -1] for k, v in self.latent.items()})
+
+        # Store/retrieve features
+        rew, cont = self.safety_margin(self.latent)
+        self.feat = self.wm.dynamics.get_feat(self.latent).detach().cpu().numpy()
+                
         self.feat = self.wm.dynamics.get_feat(self.latent).detach().cpu().numpy()
         if cont < 0.75:
             terminated = True
@@ -83,8 +90,6 @@ class Dubins_WM_Env(gym.Env):
     def reset(self, initial_state=None,seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
-        # print("[dubins-wm/reset]")
-        
         init_traj = next(self.data)
         data = self.wm.preprocess(init_traj)
         embed = self.encoder(data)
