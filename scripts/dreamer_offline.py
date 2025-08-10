@@ -188,21 +188,23 @@ class Dreamer(nn.Module):
             self.pretrain_params = (
                 list(model_params["params"])
                 + list(actor_params["params"])
-                # + list(margin_params["params"])
+                + list(margin_params["params"]) # toggle
             )
             
             self.pretrain_opt = tools.Optimizer(
                 "pretrain_opt",
                 [model_params, 
                  actor_params, 
-                #  margin_params
+                 margin_params # toggle
                  ],
                 **standard_kwargs,
             )
             
-            # self._opt = self.pretrain_opt._opt
-            # self._margin_pg_idx = 2
-            # self._margin_pg = self._opt.param_groups[self._margin_pg_idx]
+            # toggle
+            self._opt = self.pretrain_opt._opt
+            self._margin_pg_idx = 2
+            self._margin_pg = self._opt.param_groups[self._margin_pg_idx]
+            
             self._margin_warmup_step = config.margin_head["warmup_steps"]
             self._margin_active = False
             
@@ -245,18 +247,18 @@ class Dreamer(nn.Module):
         actor = self._task_behavior.actor
         data = wm.preprocess(data)
 
-        # margin warm-up on at warmup_margin_head steps
-        # if (step is not None) and (not self._margin_active) and (step >= self._margin_warmup_step):
-        #     # Unfreeze margin params
-        #     for p in self._wm.heads["margin"].parameters():
-        #         p.requires_grad = True
+        # toggle: margin warm-up on at warmup_margin_head steps
+        if (step is not None) and (not self._margin_active) and (step >= self._margin_warmup_step):
+            # Unfreeze margin params
+            for p in self._wm.heads["margin"].parameters():
+                p.requires_grad = True
 
-        #     # Turn on LR / WD for the margin param group
-        #     mh = self._config.margin_head
-        #     self._margin_pg["lr"] = mh.get("lr", self._config.model_lr)
-        #     self._margin_pg["weight_decay"] = mh.get("weight_decay", self._config.weight_decay)
+            # Turn on LR / WD for the margin param group
+            mh = self._config.margin_head
+            self._margin_pg["lr"] = mh.get("lr", self._config.model_lr)
+            self._margin_pg["weight_decay"] = mh.get("weight_decay", self._config.weight_decay)
 
-        #     self._margin_active = True
+            self._margin_active = True
 
         with tools.RequiresGrad(wm), tools.RequiresGrad(actor):
             with torch.amp.autocast("cuda", enabled=wm._use_amp):
@@ -272,44 +274,55 @@ class Dreamer(nn.Module):
                 assert kl_loss.shape == embed.shape[:2], kl_loss.shape
 
                 losses = {}
+                
+                ramp_start = self._config.margin_head["start_bp"]
+                ramp_steps = self._config.margin_head["ramp_steps"]
+                if step is None:
+                    ramp = 0.0
+                else:
+                    t = (step - ramp_start) / float(ramp_steps)
+                    ramp = float(max(0.0, min(1.0, t)))
+                
                 feat = wm.dynamics.get_feat(post)
-                device = feat.device
-                cont_loss = torch.tensor(0.0, device=device)
+                feat_det = feat.detach()
+                feat_margin = feat_det + ramp * (feat - feat_det)
+                
+                feat_grad = feat
+                feat_nograd = feat_det
+                
+                cont_loss = torch.tensor(0.0, device=feat.device)
+                per_head_means = {}
 
+                recon_loss = torch.zeros_like(kl_loss)
                 if step is None or (step <= self._config.rssm_train_steps):
-                    preds = {}
                     for name, head in wm.heads.items():
                         if name == "margin":
                             continue
-                        grad_head = name in self._config.grad_heads
-                        f = wm.dynamics.get_feat(post)
-                        f = f if grad_head else f.detach()
+                        f = feat_grad if (name in self._config.grad_heads) else feat_nograd
                         pred = head(f)
-                        preds.update(pred if isinstance(pred, dict) else {name: pred})
-
-                    for name, pred in preds.items():
-                        if name == "cont":
-                            cont_loss = -pred.log_prob(data[name])
-                        else:
-                            loss = -pred.log_prob(data[name])
-                            if name == "heat":
-                                loss *= 3
-                            assert loss.shape == embed.shape[:2], (name, loss.shape)
-                            losses[name] = loss
-
-                recon_loss = sum(losses.values()) if losses else torch.tensor(0.0, device=device)
+                        items = pred.items() if isinstance(pred, dict) else [(name, pred)]
+                        for iname, ipred in items:
+                            if iname == "cont":
+                                cont_loss = -ipred.log_prob(data[iname])
+                            else:
+                                loss_bt = -ipred.log_prob(data[iname])
+                                if iname == "heat":
+                                    loss_bt *= 3
+                                recon_loss = recon_loss + loss_bt
+                                per_head_means[iname] = loss_bt.mean()
 
                 # margin loss
                 lx_loss = torch.tensor(0.0, device=feat.device)
-                self._margin_active = True if step >= self._margin_warmup_step else False
+                self._margin_active = step >= self._margin_warmup_step
+                
                 if self._margin_active:
                     failure = data["failure"]
                     safe_mask = (failure == 0)
                     unsafe_mask = ~safe_mask
-                    safe_feat = feat[safe_mask]
-                    unsafe_feat = feat[unsafe_mask]
+                    safe_feat = feat_margin[safe_mask]
+                    unsafe_feat = feat_margin[unsafe_mask]
                     gamma = self._config.gamma_lx
-
+                    
                     if safe_feat.numel() > 0:
                         pos = self._wm.heads["margin"](safe_feat)
                         # lx_loss += torch.relu(gamma - pos).mean()
@@ -319,7 +332,6 @@ class Dreamer(nn.Module):
                         # lx_loss += torch.relu(gamma + neg).mean()
                         lx_loss += torch.nn.functional.softplus(gamma + neg).mean()
                         
-
                     lx_loss = lx_loss * self._config.margin_head["loss_scale"]
 
                 model_loss = kl_loss + recon_loss + lx_loss + cont_loss
@@ -482,10 +494,12 @@ class Dreamer(nn.Module):
                 gamma = cfg.gamma_lx
                 if safe_feat.numel() > 0:
                     pos = wm.heads["margin"](safe_feat)
-                    lx_loss = lx_loss + torch.relu(gamma - pos).mean()
+                    # lx_loss = lx_loss + torch.relu(gamma - pos).mean()
+                    lx_loss = lx_loss + torch.nn.functional.softplus(gamma - pos).mean()
                 if unsafe_feat.numel() > 0:
                     neg = wm.heads["margin"](unsafe_feat)
-                    lx_loss = lx_loss + torch.relu(gamma + neg).mean()
+                    # lx_loss = lx_loss + torch.relu(gamma + neg).mean()
+                    lx_loss = lx_loss + torch.nn.functional.softplus(gamma + neg).mean()
                 lx_loss = lx_loss * cfg.margin_head["loss_scale"]
 
             # ---------- Selection metric ----------

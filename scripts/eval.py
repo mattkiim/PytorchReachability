@@ -353,17 +353,13 @@ class Dreamer(nn.Module):
         Positive class = 'unsafe' (failure == 1). Prediction = (margin < gamma_lx).
         Returns: dict(TP=..., TN=..., FP=..., FN=..., total=...)
         """
-        assert mode in ("open", "closed")
         H, WARM = 16, 5
         FUT = H - WARM
 
         wm = self._wm
         cfg = self._config
         data = wm.preprocess(batch)  # dict of [B, T, ...]
-        if "failure" not in data:
-            raise KeyError("Batch is missing 'failure' labels; cannot compute TP/TN/FP/FN.")
         B, T = data["action"].shape[:2]
-        assert T >= H + 1, "Need at least H+1 timesteps in the batch."
 
         # choose start index so that [t0+1..t0+WARM] are warm steps, and [t0+WARM+1..WARM+FUT] are imagined steps
         t0 = max(0, T - (WARM + FUT) - 1)
@@ -391,16 +387,16 @@ class Dreamer(nn.Module):
 
         # Ground-truth (unsafe=1)
         gt = data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
+        print(gt.shape); quit()
         gt_unsafe = (gt > 0.5)
         
         # Confusion counts
-        TP = torch.sum(~pred_unsafe & ~gt_unsafe).item()
+        TP = torch.sum(~pred_unsafe & (not gt_unsafe)).item()
         TN = torch.sum(pred_unsafe & gt_unsafe).item()
         FP = torch.sum(~pred_unsafe & gt_unsafe).item()
-        FN = torch.sum(pred_unsafe & ~gt_unsafe).item()
+        FN = torch.sum(pred_unsafe & (not gt_unsafe)).item()
         total = int(pred_unsafe.numel())
         return dict(TP=int(TP), TN=int(TN), FP=int(FP), FN=int(FN), total=total)
-
 
     @torch.no_grad()
     def eval_confusion_from_batches(self, batches, mode="open", actor_mode=True, log_prefix=None,
@@ -555,18 +551,18 @@ def main(config, ckpt_path=None, eval_batches=None):
     # Optims are irrelevant for eval
 
     # ------------- Optional: video predictions on eval set -------------
-    if config.video_pred_log:
-        try:
-            if config.multimodal:
-                video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
-                logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
-                logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
-            else:
-                video_pred = agent._wm.video_pred(next(eval_dataset))
-                logger.video("eval_recon/openl_agent", to_np(video_pred))
-            logger.write(step=logger.step)
-        except Exception as e:
-            print("[Warning] video_pred failed:", e)
+    # if config.video_pred_log:
+    #     try:
+    #         if config.multimodal:
+    #             video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
+    #             logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
+    #             logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
+    #         else:
+    #             video_pred = agent._wm.video_pred(next(eval_dataset))
+    #             logger.video("eval_recon/openl_agent", to_np(video_pred))
+    #         logger.write(step=logger.step)
+    #     except Exception as e:
+    #         print("[Warning] video_pred failed:", e)
 
     # ------------- Eval: probe MLP & full metrics -------------
     def log_plot(title, data):
@@ -601,9 +597,9 @@ def main(config, ckpt_path=None, eval_batches=None):
 
     # Run both eval passes
     print("Running evaluation ...")
-    probe_mse = eval_obs_recon()
-    batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
-    recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
+    # probe_mse = eval_obs_recon()
+    # batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
+    # recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
     
     # # ------------- Eval: OL and CL rollouts -------------
     # # ---- Hybrid 16-step eval (5 warm + 11 imagine) ----
@@ -635,7 +631,7 @@ def main(config, ckpt_path=None, eval_batches=None):
     # print("Hybrid16 (closed):", res_close)
     
     # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
-    n_windows = 50  # number of windows you want to evaluate
+    n_windows = 1  # number of windows you want to evaluate
     shared_batches = [next(eval_dataset) for _ in range(n_windows)]
 
     # Open-loop on shared samples
@@ -655,13 +651,16 @@ def main(config, ckpt_path=None, eval_batches=None):
     for k, v in closed_stats.items():
         print(f"{k}: {v}")
     
+    
+    # print("\n==== EVAL SUMMARY ====")
+    # print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
+    # print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
+    # print(f"Held-out total_loss mean:  {total_mean:.6f}")
+    # print("=======================\n")
+    
+    quit()
+    
     logger.write(step=logger.step)
-
-    print("\n==== EVAL SUMMARY ====")
-    print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
-    print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
-    print(f"Held-out total_loss mean:  {total_mean:.6f}")
-    print("=======================\n")
 
 
 if __name__ == "__main__":
