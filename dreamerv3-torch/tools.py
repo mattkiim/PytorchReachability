@@ -299,10 +299,11 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             )
             
             heat_inner = traj["heat_inner"][t]
-            # print(heat_inner.shape); quit()
-            fraction_super_hot = np.sum(heat_inner > 0.8) / heat_inner.size
+            frame_wax = heat_inner > 0.0
+            frame_wax_pixel_count = np.sum(heat_inner)
+            frac_too_hot = np.sum(heat_inner[frame_wax] > 0.6) / frame_wax_pixel_count if frame_wax_pixel_count > 0 else 0.0
             
-            heat_failure = fraction_super_hot > 0.04 
+            heat_failure = frac_too_hot > 0.5
             # transition["obs_state"] = np.array([0.]) # fill with dummy value
             transition["privileged_state"] = traj['obs']['priv_state'][t]
             transition["obs_state"] = traj["obs"]["priv_state"][t]

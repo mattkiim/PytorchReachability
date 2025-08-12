@@ -387,14 +387,14 @@ class Dreamer(nn.Module):
 
         # Ground-truth (unsafe=1)
         gt = data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
-        print(gt.shape); quit()
+        # print(gt.shape); quit()
         gt_unsafe = (gt > 0.5)
         
         # Confusion counts
-        TP = torch.sum(~pred_unsafe & (not gt_unsafe)).item()
+        TP = torch.sum(~pred_unsafe & (~gt_unsafe)).item()
         TN = torch.sum(pred_unsafe & gt_unsafe).item()
         FP = torch.sum(~pred_unsafe & gt_unsafe).item()
-        FN = torch.sum(pred_unsafe & (not gt_unsafe)).item()
+        FN = torch.sum(pred_unsafe & (~gt_unsafe)).item()
         total = int(pred_unsafe.numel())
         return dict(TP=int(TP), TN=int(TN), FP=int(FP), FN=int(FN), total=total)
 
@@ -631,7 +631,7 @@ def main(config, ckpt_path=None, eval_batches=None):
     # print("Hybrid16 (closed):", res_close)
     
     # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
-    n_windows = 1  # number of windows you want to evaluate
+    n_windows = 50  # number of windows you want to evaluate
     shared_batches = [next(eval_dataset) for _ in range(n_windows)]
 
     # Open-loop on shared samples

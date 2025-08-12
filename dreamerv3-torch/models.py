@@ -238,8 +238,7 @@ class WorldModel(nn.Module):
             k: torch.tensor(v, device=self._config.device, dtype=torch.float32)
             for k, v in obs.items()
         }
-        obs["image"] = obs["image"] / 255.0
-        obs["heat"] = obs["heat"] / 255.0
+        
         if "discount" in obs:
             obs["discount"] *= self._config.discount
             # (batch_size, batch_length) -> (batch_size, batch_length, 1)
@@ -360,8 +359,8 @@ class WorldModel(nn.Module):
     
     def video_pred_multimodal(self, data):
         video = self.video_pred(data)
-        video_rgb = video[..., :3] * 255 # TODO: soft code
-        video_heat = video[..., 3:] * 255 # TODO: soft code
+        video_rgb = video[..., :3] 
+        video_heat = video[..., 3:] 
         video_heat_3 = torch.cat([video_heat, video_heat, video_heat], dim=-1)
         return video_rgb, video_heat_3
 

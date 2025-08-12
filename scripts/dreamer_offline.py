@@ -275,20 +275,23 @@ class Dreamer(nn.Module):
 
                 losses = {}
                 
-                ramp_start = self._config.margin_head["start_bp"]
-                ramp_steps = self._config.margin_head["ramp_steps"]
-                if step is None:
-                    ramp = 0.0
-                else:
-                    t = (step - ramp_start) / float(ramp_steps)
-                    ramp = float(max(0.0, min(1.0, t)))
+                # ramp_start = self._config.margin_head["start_bp"]
+                # ramp_steps = self._config.margin_head["ramp_steps"]
+                # if step is None:
+                #     ramp = 0.0
+                # else:
+                #     t = (step - ramp_start) / float(ramp_steps)
+                #     ramp = float(max(0.0, min(1.0, t)))
+                
+                # feat = wm.dynamics.get_feat(post)
+                # feat_det = feat.detach()
+                # feat_margin = feat_det + ramp * (feat - feat_det)
+                
+                # feat_grad = feat
+                # feat_nograd = feat_det
                 
                 feat = wm.dynamics.get_feat(post)
-                feat_det = feat.detach()
-                feat_margin = feat_det + ramp * (feat - feat_det)
-                
-                feat_grad = feat
-                feat_nograd = feat_det
+                feat_margin = feat.detach()
                 
                 cont_loss = torch.tensor(0.0, device=feat.device)
                 per_head_means = {}
@@ -298,7 +301,8 @@ class Dreamer(nn.Module):
                     for name, head in wm.heads.items():
                         if name == "margin":
                             continue
-                        f = feat_grad if (name in self._config.grad_heads) else feat_nograd
+                        # f = feat_grad if (name in self._config.grad_heads) else feat_nograd
+                        f = feat
                         pred = head(f)
                         items = pred.items() if isinstance(pred, dict) else [(name, pred)]
                         for iname, ipred in items:
