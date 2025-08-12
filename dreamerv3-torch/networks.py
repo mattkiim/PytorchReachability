@@ -347,6 +347,11 @@ class MultiEncoder(nn.Module):
             input_ch = sum([v[-1] for v in self.cnn_shapes.values()])
             # print(f"[networks/MultiEncoder/init] CNN input channels: {input_ch}")
             input_shape = tuple(self.cnn_shapes.values())[0][:2] + (input_ch,)
+            
+            # print(type(input_shape), type(cnn_depth), type(act), type(norm), type(kernel_size), type(minres)) 
+            # print(input_shape, cnn_depth, act, norm, kernel_size, minres)
+            # quit()
+            
             self._cnn = ConvEncoder(
                 input_shape, cnn_depth, act, norm, kernel_size, minres
             )

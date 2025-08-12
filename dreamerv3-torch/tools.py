@@ -240,7 +240,7 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
 
             traj = {
                 'obs': {
-                    'image': traj_group['camera_0'][:],
+                    'image': traj_group['camera_0'][:] * 0,
                     'state': traj_group['states'][:],
                     'priv_state': traj_group['states'][:],
                     'priv_heat': traj_group['labels'][:] if 'labels' in traj_group else np.zeros(len(traj_group['camera_0']), dtype=np.float32)
@@ -250,7 +250,7 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
             }
             
 
-            if 'camera_2' in traj_group: # FIXME: not sure if this works...
+            if 'camera_2' in traj_group:
                 traj['obs']['heat'] = traj_group['camera_2'][:, :, :, :1]
                 traj['heat_inner'] = traj_group['hot_inner'][:]
             else:
