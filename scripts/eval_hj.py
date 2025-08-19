@@ -361,7 +361,7 @@ def main():
     
     epoch=16
     
-    model_path = "/home/matthew/PytorchReachability/logs/dreamer_dubins_multimodal_v2plus/PyHJ/0627/184105/PyHJ/dubins-wm/wm_actor_activation_ReLU_critic_activation_ReLU_game_gd_steps_1_tau_0.005_training_num_1_buffer_size_40000_c_net_128_3_a1_128_3_gamma_0.9999/noise_0.1_actor_lr_0.0001_critic_lr_0.001_batch_512_step_per_epoch_40000_kwargs_{}_seed_0/epoch_id_16/policy.pth"
+    model_path = "/home/matthew/PytorchReachability/logs/dreamer_dubins_multimodal_v2plus_12/PyHJ/0627/184105/PyHJ/dubins-wm/wm_actor_activation_ReLU_critic_activation_ReLU_game_gd_steps_1_tau_0.005_training_num_1_buffer_size_40000_c_net_128_3_a1_128_3_gamma_0.9999/noise_0.1_actor_lr_0.0001_critic_lr_0.001_batch_512_step_per_epoch_40000_kwargs_{}_seed_0/epoch_id_16/policy.pth"
     
     # model_path = os.path.join(
     #         log_path+"/epoch_id_{}".format(epoch),

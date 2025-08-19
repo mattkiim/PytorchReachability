@@ -61,7 +61,7 @@ class WandbLogger(BaseLogger):
         self.write_flush = write_flush
         self.restored = False
         if project is None:
-            project = os.getenv("WANDB_PROJECT", "tianshou")
+            project = os.getenv("WANDB_PROJECT", "po_toast_hj")
 
         self.wandb_run = wandb.init(
             project=project,

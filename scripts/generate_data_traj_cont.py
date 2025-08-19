@@ -623,20 +623,20 @@ def get_frame_eval(states, config):
 def get_init_state(config):
   # don't sample inside the failure set
   states = torch.zeros(4)
-  while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
-    states[:3] = torch.rand(3)
-    
-    states[0] *= (config.x_max-config.buffer) - (config.x_min + config.buffer)
-    states[1] *= (config.y_max-config.buffer) - (config.y_min + config.buffer)
-    states[0] += config.x_min + config.buffer
-    states[1] += config.y_min + config.buffer
+  # while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
+  states[:2] = torch.rand(2)
+  
+  states[0] *= (config.x_max-config.buffer) - (config.x_min + config.buffer)
+  states[1] *= (config.y_max-config.buffer) - (config.y_min + config.buffer)
+  states[0] += config.x_min + config.buffer
+  states[1] += config.y_min + config.buffer
 
   # so that the trajectory doesn't immediately go out of bounds
   states[2] = torch.atan2(-states[1], -states[0]) + np.random.normal(0, 1)
   states[2] = states[2] % (2*np.pi)
   
-  v_min = getattr(config, 'v_min', 0.0)
-  v_max = getattr(config, 'v_max', 1.0)
+  v_min = 0.0
+  v_max = 1.0
   states[3] = torch.rand(1) * (v_max - v_min) + v_min
   
   if config.test:
@@ -669,10 +669,12 @@ def gen_one_traj_img(config, curr_traj_count=0):
   for t in range(config.data_length):
     # random between -u_max and u_max
     if config.test:
-      ac = torch.tensor([0, 0])
+      ac = torch.tensor([0, -0.5])
     else: 
-      steer_rate = torch.rand(1) * 2 * u_max - u_max                  # [-u_max, u_max]
-      lin_accel = 0.1 * (2 * torch.randint(0, 2, (1,)).float() - 1)
+      steer_rate = torch.rand(1) * 2 * u_max - u_max
+      # r = torch.randint(0, 3, (1,), dtype=torch.float32)
+      # lin_accel = 0.1 * (r - 1)
+      lin_accel = (torch.rand(1) * 2.0) - 1.0
       ac = torch.cat([steer_rate, lin_accel], dim=0)
     
     x, y, theta, v = states

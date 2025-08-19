@@ -50,7 +50,7 @@ class Dubins_WM_Env(gym.Env):
             'is_last': bool_space,
             'is_terminal': bool_space,
         })
-        self.action_space = spaces.Box(low=np.array([-1.0, -0.1]), high=np.array([1.0, 0.1]), shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
         self.image_size=config.size[0]
         self.turnRate = config.turnRate
 
@@ -67,12 +67,16 @@ class Dubins_WM_Env(gym.Env):
     
     def step(self, action):
         init = {k: v[:, -1] for k, v in self.latent.items()}
+        # for k, v in init.items():
+        #     print(f"{k}: {v.shape}")
+        # quit()
         action = np.clip(action, self.action_space.low, self.action_space.high)
         steer = action[0] * self.turnRate  # [-turnRate, +turnRate]
         accel = action[1] * 0.2  # scale acceleration (tune as needed)
 
-        action_tensor = torch.tensor([[steer, accel]], dtype=torch.float32).to(self.device)
-        self.latent = self.wm.dynamics.imagine_with_action(action_tensor, {k: v[:, -1] for k, v in self.latent.items()})
+        action_tensor = torch.tensor([[[steer, accel]]], dtype=torch.float32).to(self.device) # 
+        action_tensor = action_tensor.view(1, 1, -1)  # [time=1, batch=1, dim=2]
+        self.latent = self.wm.dynamics.imagine_with_action(action_tensor, init)
 
         # Store/retrieve features
         rew, cont = self.safety_margin(self.latent)

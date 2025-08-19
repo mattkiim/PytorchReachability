@@ -405,7 +405,7 @@ class Dreamer(nn.Module):
         nx, ny, nz, nv = self._config.nx, self._config.ny, 3, 3
         self.nz = nz
         self.nv = nv
-        self.v = np.zeros((nx, ny, nz, nv))
+        self.v = np.zeros((nx, ny, nv))
         xs = np.linspace(self._config.x_min, self._config.x_max, nx)
         ys = np.linspace(self._config.y_min, self._config.y_max, ny)
         thetas = np.linspace(0, 2 * np.pi, nz, endpoint=True)
@@ -424,7 +424,7 @@ class Dreamer(nn.Module):
             x = xs[idx[0]]
             y = ys[idx[1]]
             theta = thetas[idx[2]]
-            vel = vels[idx[3]]
+            # vel = vels[idx[3]]
             
             x -= np.cos(theta) * 0.05
             y -= np.sin(theta) * 0.05
@@ -580,7 +580,7 @@ class Dreamer(nn.Module):
             cbar.ax.set_yticklabels([vmin, 0, vmax], fontsize=10)
 
         for h_idx, heat_val in enumerate(heat_values):
-            thetas = np.zeros_like(self.velocity_lin)  # Fix angle = 0
+            thetas = np.zeros_like(self.velocity_lin)
             g_x_hot, _, _ = self.get_latent(
                 thetas, self.velocity_lin, heat_val,
                 self.imgs[heat_val], self.heat_imgs[heat_val], self.no_heat_imgs.get(heat_val),
@@ -601,6 +601,7 @@ class Dreamer(nn.Module):
 
             for mode_idx, g_x in enumerate(g_x_list):
                 # Fill into (x, y, velocity) grid
+                # print(g_x.shape); quit()
                 self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 3]] = g_x
                 v = self.v  # shape (nx, ny, nv)
 
@@ -689,7 +690,7 @@ def main(config):
     logger = tools.Logger(logdir, config.action_repeat * step)
 
     print("Create environments") 
-    action_space = gym.spaces.Box(low=np.array([-1.0, -0.1]), high=np.array([1.0, 0.1]), shape=(2,), dtype=np.float32)
+    action_space = gym.spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
 
     bounds = np.array([[config.x_min, config.x_max], [config.y_min, config.y_max], [0, 2 * np.pi], [0, 1]])
     low = bounds[:, 0]

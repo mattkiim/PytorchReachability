@@ -240,6 +240,7 @@ actor = Actor(
 actor_optim = torch.optim.AdamW(actor.parameters(), lr=args.actor_lr)
 actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=actor_optim, gamma=0.995)
 
+# print(env.action_space); quit()
 
 policy = DDPGPolicy(
 critic,
@@ -356,6 +357,7 @@ def make_cache(config, vels, heat_values):
             imgs_prev = []
             heat_imgs = []
             no_heat_imgs = []
+            thetas_prev = []
             vels_prev = []
             heat_values_prev = []
             states = []
@@ -408,6 +410,7 @@ def make_cache(config, vels, heat_values):
                 heat_imgs.append(heat)
                 if config.include_no_heat_vis:
                     no_heat_imgs.append(no_heat)
+                thetas_prev.append(theta_prev)
                 vels_prev.append(vel_prev)
                 heat_values_prev.append(heat_value)
                 states.append(prev_state)
@@ -416,6 +419,7 @@ def make_cache(config, vels, heat_values):
 
             # Convert to arrays
             idxs = np.array(idxs)
+            thetas_prev_lin = np.array(thetas_prev)
             vel_prev_lin = np.array(vels_prev)
             heat_values_prev = np.array(heat_values_prev)
 
@@ -424,6 +428,7 @@ def make_cache(config, vels, heat_values):
                 imgs_prev,
                 heat_imgs,
                 no_heat_imgs,
+                thetas_prev_lin,
                 vel_prev_lin,
                 states,
             ]
@@ -448,43 +453,63 @@ def load_cache(config):
 
     return cache
     
-def get_latent(self, thetas, vels, heat_value, imgs, heat, no_heat, heat_bool=False):
-    states = np.expand_dims(np.expand_dims(thetas,1),1)
-    vels = np.expand_dims(np.expand_dims(vels, 1), 1) 
-    imgs = np.expand_dims(imgs, 1)
-    heat = heat if heat_bool else no_heat
-    heat = np.expand_dims(heat, 1)
-    # print(f"[dreamer_offline/Dreamer/get_latent] heat: {heat.mean()}")
-    # print(imgs.shape); quit()
-    batch_size = np.shape(thetas)[0]
-    dummy_acs = np.zeros((batch_size, 1, 2)) 
-    firsts = np.ones((batch_size, 1))
-    lasts = np.zeros((batch_size, 1))
-    
-    cos = np.cos(states)
-    sin = np.sin(states)
-    heat_values = np.ones_like(states) * heat_value
-    if not heat_bool: heat_values *= 0
-    
-    if self._config.obs_priv_heat:
-        states = np.concatenate([cos, sin, heat_values], axis=-1)
+def get_latent(wm, thetas, vels, heat_values, imgs, heat_imgs, no_heat_imgs, heat_bool=True):
+    thetas = np.expand_dims(np.expand_dims(thetas, 1), 1)     # (B,1,1)
+    vels = np.expand_dims(np.expand_dims(vels, 1), 1)         # (B,1,1)
+    imgs = np.expand_dims(imgs, 1)                            # (B,1,H,W,3)
+    heat_imgs = heat_imgs if heat_bool else no_heat_imgs
+    heat_imgs = np.expand_dims(heat_imgs, 1)                  # (B,1,H,W,1)
+
+    # Dummy inputs for rollout
+    B = thetas.shape[0]
+    dummy_acs = np.zeros((B, 1, 2), dtype=np.float32)         # [angular_accel, linear_accel]
+    firsts = np.ones((B, 1), dtype=bool)
+    lasts = np.zeros((B, 1), dtype=bool)
+
+    cos = np.cos(thetas)
+    sin = np.sin(thetas)
+    heat_values = np.ones_like(cos) * heat_values
+    if not heat_bool:
+        heat_values *= 0
+
+    # === Observation State ===
+    if config.obs_priv_heat:
+        states = np.concatenate([cos, sin, heat_values], axis=-1)  # (B,1,3)
     else:
-        states = np.concatenate([cos, sin, vels], axis=-1)
-        
-    data = {'obs_state': states, 'image': imgs, 'heat': heat, 'action': dummy_acs, 'is_first': firsts, 'is_terminal': lasts}
-        
-    data = self._wm.preprocess(data)
-    embed = self._wm.encoder(data)
+        states = np.concatenate([cos, sin, vels], axis=-1)         # (B,1,3)
 
-    post, prior = self._wm.dynamics.observe(
-        embed, data["action"], data["is_first"]
-        )
-    feat = self._wm.dynamics.get_feat(post).detach()
-    with torch.no_grad():  # Disable gradient calculation
-        g_x = self._wm.heads["margin"](feat).detach().cpu().numpy().squeeze()
-    feat = self._wm.dynamics.get_feat(post).detach().cpu().numpy().squeeze()
+    chunk_size = 128
+    embed = []
+    for i in range(0, B, chunk_size):
+        s = slice(i, i + chunk_size)
+        data_chunk = {
+            'obs_state': states[s],
+            'image': imgs[s],
+            'heat': heat_imgs[s],
+            'action': dummy_acs[s],
+            'is_first': firsts[s],
+            'is_terminal': lasts[s],
+        }
+        data_chunk = wm.preprocess(data_chunk)
+        embed.append(wm.encoder(data_chunk))
+    embed = torch.cat(embed, dim=0)  # (B, D)
 
-    return g_x, feat, post
+    full_data = {
+        'obs_state': states,
+        'image': imgs,
+        'heat': heat_imgs,
+        'action': dummy_acs,
+        'is_first': firsts,
+        'is_terminal': lasts,
+    }
+    full_data = wm.preprocess(full_data)
+
+    post, _ = wm.dynamics.observe(embed, full_data["action"], full_data["is_first"])
+    feat = wm.dynamics.get_feat(post).detach()
+    lz = torch.tanh(wm.heads["margin"](feat)).detach()
+
+    return feat.cpu().numpy(), lz.squeeze().cpu().numpy(), post
+
 
 def evaluate_V(state):
     tmp_obs = np.array(state)#.reshape(1,-1)
@@ -557,7 +582,7 @@ def rollout_dubins(
             linear_acc  = act[:, 1]
 
             v      += linear_acc * config.dt
-            v      = torch.clamp(v, min=0.0, max=config.max_speed)  # optional clamp
+            v      = torch.clamp(v, min=0.0, max=1.0)
             x      += v * torch.cos(theta) * config.dt
             y      += v * torch.sin(theta) * config.dt
             theta  += angular_acc * config.dt
@@ -614,120 +639,118 @@ def rollout_dubins(
 
 @torch.no_grad()    
 def single_rollout(initial_conditions, config, T=100, target=None):
-    """
-    1. Take the initial condition, generate RGB + heat image.
-    2. Roll out trajectory using the Dreamer policy.
-    3. Convert real states to RGB + Heat.
-    4. Save trajectory as video (optional).
-    """
     gen = HeatFrameGenerator(config)
     trajectories_rgb_obs = []
     trajectories_heat_obs = []
 
     for initial_condition in initial_conditions:
-        state = torch.tensor(initial_condition[:4])  # (x, y, theta, vel)
-        heat_value = initial_condition[-1]
-        vehicle_heat = heat_value
+        device = config.device
+        state = torch.tensor(initial_condition[:4], dtype=torch.float32, device=device)  # (x, y, theta, vel)
+        x, y, theta, vel = state
+        omega = torch.tensor(0.0, dtype=torch.float32, device=device)
+        dt = torch.tensor(config.dt, dtype=torch.float32, device=device)
+
+        vehicle_heat = torch.tensor(initial_condition[-1], dtype=torch.float32, device=device)
+
         traj_rgb = []
         traj_heat = []
 
         for t in range(T):
-            # Generate RGB and heat images from current state
-            img = get_frame_eval(state, config)
-            gen._compute_geometry(img.shape)
+            img_og = get_frame_eval_pil(state.cpu().numpy(), config)
+            gen._compute_geometry(img_og.shape)
 
             if config.heat_mode == 3:
-                img = gen.get_rgb_v3(img, config, heat=True, heat_value=vehicle_heat)
-                heat, _ = gen.get_heat_frame_v3(img, config, heat=True, heat_value=vehicle_heat)
+                img = gen.get_rgb_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                heat, _ = gen.get_heat_frame_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 2:
-                img = gen.get_rgb_v2(img, config, heat=True)
-                heat, _ = gen.get_heat_frame_v2(img, config, heat=True, heat_value=vehicle_heat)
+                img = gen.get_rgb_v2(img_og, config, heat=True)
+                heat, _ = gen.get_heat_frame_v2(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 1:
-                heat = gen.get_heat_frame_v1(img, heat=True)
+                heat = gen.get_heat_frame_v1(img_og, heat=True)
             elif config.heat_mode == 0:
-                heat = gen.get_heat_frame_v0(img, heat=True)
+                heat = gen.get_heat_frame_v0(img_og, heat=True)
             else:
                 raise NotImplementedError("Unsupported heat_mode")
 
-            # Store images
+            # Annotate image
             img = cv2.putText(
-                img,
-                f"Heat: {vehicle_heat:.2f}",
-                org=(5, 15),  # (x, y) position
+                img, f"Heat: {vehicle_heat.item():.2f}",
+                org=(5, 15),
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX,
                 fontScale=0.4,
                 color=(255, 0, 0),
                 thickness=1,
                 lineType=cv2.LINE_AA
             )
+
             traj_rgb.append(img)
             traj_heat.append(heat)
 
-            # Convert to Dreamer latent
+            # Get latent
             feat, lz, post = get_latent(
-                wm, [state[2]], vehicle_heat, [img], [heat], no_heat_imgs=None, heat_bool=True
+                wm, [theta.item()], [vel.item()], vehicle_heat.item(), [img], [heat], no_heat_imgs=None, heat_bool=True
             )
 
-            # Get latent feature
-            feat_tensor = torch.tensor(feat, dtype=torch.float32, device=config.device)
-            dreamer_action = policy.actor(feat_tensor.unsqueeze(0))[0][0]  # shape: (1,1)
+            feat_tensor = torch.tensor(feat, dtype=torch.float32, device=device)
+            dreamer_action = policy.actor(feat_tensor.unsqueeze(0))[0][0]
 
             if target is not None:
-                # Current position and orientation
-                x, y, theta, vel = state
                 tx, ty = target
+                tx = torch.tensor(tx, dtype=torch.float32, device=device)
+                ty = torch.tensor(ty, dtype=torch.float32, device=device)
 
-                # Compute nominal heading correction
-                desired_heading = np.arctan2(ty - y, tx - x)
+                desired_heading = torch.atan2(ty - y, tx - x)
                 heading_error = (desired_heading - theta + np.pi) % (2 * np.pi) - np.pi
 
-                # Nominal action to correct heading
-                nominal_turn = heading_error / config.dt
-                nominal_turn = np.clip(nominal_turn, -config.turnRate, config.turnRate)
-                nominal_accel = 0.0
-                nominal_action = torch.tensor([nominal_turn, nominal_accel], dtype=torch.float32, device=config.device)
+                nominal_turn = heading_error / dt
+                nominal_turn = torch.clamp(nominal_turn, -config.turnRate, config.turnRate)
+                nominal_accel = torch.tensor(0.0, device=device)
 
-                # Evaluate safety of nominal action
+                nominal_action = torch.stack([nominal_turn, nominal_accel])
                 value_nominal = policy.critic(feat_tensor.unsqueeze(0), nominal_action.unsqueeze(0))[0]
-                is_safe = value_nominal > 0
 
-                action = nominal_action if is_safe else dreamer_action
+                action = nominal_action if value_nominal > 0 else dreamer_action
             else:
                 action = dreamer_action
 
-            # Simulate Dubins dynamics
             ang_accel = action[0]
             lin_accel = action[1]
 
-            # Integrate angular velocity and heading
-            omega += ang_accel * config.dt
-            theta += omega * config.dt
-            theta = (theta + np.pi) % (2 * np.pi) - np.pi  # wrap to [-π, π]
+            omega += ang_accel * dt
+            theta += omega * dt
+            theta = (theta + np.pi) % (2 * np.pi) - np.pi
 
-            # Integrate linear velocity and position
-            vel += lin_accel * config.dt
-            vel = torch.clamp(vel, min=0.0, max=config.max_speed)
+            vel += lin_accel * dt
+            vel = torch.clamp(vel, min=0.0, max=1.0)
 
-            x += vel * torch.cos(theta) * config.dt
-            y += vel * torch.sin(theta) * config.dt
-            
+            x += vel * torch.cos(theta) * dt
+            y += vel * torch.sin(theta) * dt
+
             state = torch.stack([x, y, theta, vel])
+            
+            obstacle_mask = gen._get_mask()
+            vehicle_mask = (
+                (img_og[..., 2:3] > 255/2) & 
+                (img_og[..., 0:1] < 100) & 
+                (img_og[..., 1:2] < 100)
+            )
 
-            # Heat update (like rollout_dubins)
-            dist = ((state[0] - config.obs_x)**2 + (state[1] - config.obs_y)**2).sqrt()
-            inside_obs = dist < config.obs_r
+            # dist = torch.sqrt((x - config.obs_x)**2 + (y - config.obs_y)**2)
+            # inside_obs = dist < config.obs_r
+            
+            inside_obs = np.any(vehicle_mask & obstacle_mask)
 
             if inside_obs:
                 vehicle_heat += config.alpha_in / (255 / 1.1)
             else:
                 vehicle_heat -= config.alpha_out / (255 / 1.1)
-            # vehicle_heat = torch.tensor(vehicle_heat, dtype=torch.float32)
-            vehicle_heat = np.clip(vehicle_heat, 0, 1)
+            vehicle_heat = torch.clamp(vehicle_heat, 0.0, 1.0)
 
         trajectories_rgb_obs.append(traj_rgb)
         trajectories_heat_obs.append(traj_heat)
 
     return trajectories_rgb_obs, trajectories_heat_obs
+
 
 
 def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
@@ -768,14 +791,16 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
         plot_list.append((False, "no_heat"))
 
     # iterate over each (theta, heat) column
+    theta=0.0
     for col, (vel, heat_value) in enumerate(vel_heat_pairs):
-        idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, vels_prev, states_lst = cache[(vel, heat_value)]
+        idxs, imgs_prev, heat_imgs_prev, no_heat_imgs_prev, thetas_prev, vels_prev, states_lst = cache[(vel, heat_value)]
         states_tensor = torch.stack(states_lst).float().to(config.device)
 
         # evaluate both HEAT / NO‑HEAT rows
         for row, (heat_bool, lbl) in enumerate(plot_list):
             feat, lz, post = get_latent(
                 wm,
+                thetas_prev,
                 vels_prev,
                 heat_value,
                 imgs_prev,
@@ -847,7 +872,7 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
                         color=rgba_arr, linewidths=0, zorder=3)
                 
             # overlay the BRT in black
-            key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
+            key = f"theta_{theta:.4f}_{vel:.4f}_{heat_value:.4f}_rad"
             if key in gt:
                 gt_slice = gt[key]
                 ax.contour(
@@ -933,7 +958,7 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
                 ax.axis("off")
                 
             # ------------------------------------------------------------------ #
-            initial_state = np.array([0., 0., 0., 0., 0.])
+            initial_state = np.array([-0., 0., 0., 0., 0.])
             # print(initial_state); quit()
             traj_rgb, traj_heat = single_rollout([initial_state], config, T=rollout_T)
 
