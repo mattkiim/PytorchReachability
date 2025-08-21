@@ -178,35 +178,37 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
         critic_loss.backward()
         optimizer.step()
         return td, critic_loss
-
+    
     def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
-        """Update critic network and actor network"""
-        # critic
-        td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
-        # if self.critic_scheduler is not None:
-            # self.critic_scheduler.step()
-        batch.weight = td  # prio-buffer
-        # actor
-        
-        """Note that we update actor 5 times for each critic update!"""
-        # update actor
-        if not self.warmup:
-            for _ in range(self.actor_gradient_steps):
-                act = self(batch, model="actor").act
-                actor_loss = -self.critic(batch.obs, act).mean()
-                self.actor_optim.zero_grad()
-                actor_loss.backward()
-                self.actor_optim.step()
-        else:
-            actor_loss = torch.tensor(0.0)
-               
-        
-        # soft update the parameters
-        self.sync_weight()
-        return {
-            "loss/actor": actor_loss.item(),
-            "loss/critic": critic_loss.item(),
-        }
+            """Update critic network and actor network"""
+            # critic
+            td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
+            batch.weight = td  # prio-buffer
+            # actor
+            
+            """Note that we update actor 5 times for each critic update!"""
+            # update actor
+            if not self.warmup:
+                for _ in range(self.actor_gradient_steps):
+                    act = self(batch, model="actor").act
+                    action_reg_loss = 1e-2 * (act[:,:6] ** 2).sum(dim=1).mean()
+                    action_mag = torch.norm(act[:,:6], dim=-1, keepdim=True)
+                    safety_loss = -self.critic(batch.obs, act).mean()
+                    actor_loss = safety_loss + 0.1 * action_reg_loss # encourage smaller actions
+                    self.actor_optim.zero_grad()
+                    actor_loss.backward()
+                    self.actor_optim.step()
+            else:
+                safety_loss = torch.tensor(0.0)
+                action_mag = torch.tensor(0.0)
+  
+            # soft update the parameters
+            self.sync_weight()
+            return {
+                "loss/actor": safety_loss.item(),
+                "loss/critic": critic_loss.item(),
+                "loss/action_mag": action_mag.mean().item(),
+            }
 
     def exploration_noise(self, act: Union[np.ndarray, Batch],
                             batch: Batch) -> Union[np.ndarray, Batch]:

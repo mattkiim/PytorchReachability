@@ -515,16 +515,12 @@ def main(config, ckpt_path=None, eval_batches=None):
 
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
-    # ------------- Load datasets -------------
-    expert_eps = collections.OrderedDict()
-    tools.fill_expert_dataset_dubins(config, expert_eps)
-    expert_dataset = make_dataset(expert_eps, config)
-
+    # ------------- Load dataset -------------
     expert_val_eps = collections.OrderedDict()
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_val_eps, config)
 
-    print("Length of training data:", len(expert_eps))
+    # print("Length of training data:", len(expert_eps))
     print("Length of validation data:", len(expert_val_eps))
 
     # ------------- Build agent (no training) -------------
@@ -533,7 +529,7 @@ def main(config, ckpt_path=None, eval_batches=None):
         action_space,
         config,
         logger,
-        expert_dataset,
+        dataset=None,
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     agent.eval()

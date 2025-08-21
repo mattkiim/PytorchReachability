@@ -266,6 +266,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
     num_train = config.num_train_trajs
     
     demos = load_h5_to_expert_eps(dataset_path)
+    random.shuffle(demos)
         
     pixel_keys = sorted(['image', 'heat'])
     state_keys = sorted(['state'])

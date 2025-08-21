@@ -20,11 +20,11 @@ class Franka_WM_Env(gym.Env):
         self.low = np.array([
             -1., -1., -np.pi
         ])
-        self.device = 'cuda:1'
+        self.device = 'cuda:0'
 
         self.set_wm(*params)
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1,1,1536,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1,1,544,), dtype=np.float32) # FIXME: why 1536?
         self.action1_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32) # control action space
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32) # joint action space
         self.scalar = 0.15
@@ -90,7 +90,7 @@ class Franka_WM_Env(gym.Env):
         
         feat = self.wm.dynamics.get_feat(state).detach()
         with torch.no_grad():  # Disable gradient calculation
-            outputs = torch.tanh(self.wm.heads["failure"](feat))
+            outputs = torch.tanh(self.wm.heads["margin"](feat))
             g_xList.append(outputs.detach().cpu().numpy())
         
         safety_margin = np.array(g_xList).squeeze()

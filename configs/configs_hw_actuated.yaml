@@ -15,14 +15,14 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 46 ## 4000 in paper
-  num_train_trajs: 40 ## 3800 in paper
+  num_trajs: 130 ## 4000 in paper
+  num_train_trajs: 115 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/mattkiim/heat_actuated1_consolidated.h5'
+  dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: '/data/mattkiim/runs/heat_actuated'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/heat_actuated2'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -142,8 +142,8 @@ defaults:
   step-per-collect: 8 # type=int, default=8)
   update-per-step: 0.125 # type=float, default=0.125)
   batch_size-pyhj: 512 # type=int, default=512)
-  control-net: [128, 128, 128] # type=int, nargs='*', default=None) # for control policy
-  critic-net: [128, 128, 128]  # type=int, nargs='*', default=None) # for critic net
+  control-net: [512, 512, 512] # type=int, nargs='*', default=None) # for control policy
+  critic-net: [512, 512, 512]  # type=int, nargs='*', default=None) # for critic net
   training-num: 1 # type=int, default=8)
   test-num: 1 # type=int, default=100)
   render: 0. # type=float, default=0.)

@@ -14,14 +14,14 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 46 ## 4000 in paper
-  num_train_trajs: 40 ## 3800 in paper
+  num_trajs: 130 ## 4000 in paper
+  num_train_trajs: 115 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/mattkiim/heat_actuated1_consolidated.h5'
+  dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: '/data/mattkiim/runs/heat_actuated'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/heat_actuated2'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -88,8 +88,8 @@ defaults:
   initial: 'learned'
 
   # Training
-  batch_size: 16
-  batch_length: 64
+  batch_size: 64
+  batch_length: 16
   train_ratio: 512
   pretrain: 100
   model_lr: 1e-4

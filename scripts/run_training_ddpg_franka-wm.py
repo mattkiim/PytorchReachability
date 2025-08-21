@@ -97,7 +97,7 @@ config = args
 
 image_size = config.size[0] #128
 cam_obs_space = gym.spaces.Box(
-        low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+        low=0, high=1, shape=(image_size, image_size, 3), dtype=np.float32
     )
 policy_obs_space = gym.spaces.Box(
         low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32
@@ -109,7 +109,7 @@ obs_observation_space = gym.spaces.Box(
 )
 
 heat_observation_space = gym.spaces.Box(
-    low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
+    low=0, high=1, shape=(image_size, image_size, 1), dtype=np.float32
 )
 
 observation_space = gym.spaces.Dict({
@@ -119,7 +119,7 @@ observation_space = gym.spaces.Dict({
         'is_first': bool_space,
         'is_last': bool_space,
         'is_terminal': bool_space,
-        # 'policy': policy_obs_space,
+        'policy': policy_obs_space,
         # 'wrist_cam': cam_obs_space,
     })
 action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
@@ -161,7 +161,7 @@ env = gymnasium.make(args.task, params = [wm, datasets, config])
 
 # check if the environment has control and disturbance actions:
 assert hasattr(env, 'action1_space') #and hasattr(env, 'action2_space'), "The environment does not have control and disturbance actions!"
-args.state_shape = env.observation_space.shape or env.observation_space.n
+args.state_shape = 544
 args.action_shape = env.action_space.shape or env.action_space.n
 
 args.max_action = env.action_space.high[0]
