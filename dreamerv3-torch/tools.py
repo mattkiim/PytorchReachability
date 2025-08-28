@@ -222,7 +222,7 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
                 else:
                     action_mins = np.minimum(action_mins, actions.min(axis=0))
                     action_maxs = np.maximum(action_maxs, actions.max(axis=0))
-
+                    
     # Second pass to load data and normalize
     with h5py.File(h5_path, 'r') as f:
         traj_keys = sorted(f.keys())

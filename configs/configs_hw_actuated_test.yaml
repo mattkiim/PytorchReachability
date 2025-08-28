@@ -15,14 +15,14 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 130 ## 4000 in paper
-  num_train_trajs: 115 ## 3800 in paper
+  num_trajs: 2 ## 4000 in paper
+  num_train_trajs: 1 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
+  dataset_path: '/data/mattkiim/hw_test.h5'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: '/data/mattkiim/runs/heat_actuated2'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/heat_actuated2_test'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_test/rssm_ckpt.pt'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -176,8 +176,3 @@ defaults:
 
   include_no_heat_vis: False
   obs_priv_heat: False # whether to use privileged heat in the observation state
-
-  use_gp: False
-  gp_weight: 10.0
-  relu_weight: 100.0
-  gp_grad_thresh: 0.1

@@ -27,6 +27,8 @@ from PyHJ.utils import TensorboardLogger
 from PyHJ.utils.net.common import Net
 from PyHJ.utils.net.continuous import Actor, Critic
 import PyHJ.reach_rl_gym_envs as reach_rl_gym_envs
+from PyHJ.policy import avoid_DDPGPolicy_annealing as DDPGPolicy
+
 
 from termcolor import cprint
 from datetime import datetime
@@ -95,7 +97,7 @@ def get_args():
 args=get_args()
 config = args
 
-image_size = config.size[0] #128
+image_size = config.size[0]
 cam_obs_space = gym.spaces.Box(
         low=0, high=1, shape=(image_size, image_size, 3), dtype=np.float32
     )
@@ -222,7 +224,6 @@ critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=critic_optim
 
 log_path = None
 
-from PyHJ.policy import avoid_DDPGPolicy_annealing as DDPGPolicy
 
 print("DDPG under the Avoid annealed Bellman equation with no Disturbance has been loaded!")
 

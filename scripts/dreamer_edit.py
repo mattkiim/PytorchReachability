@@ -150,10 +150,7 @@ class Dreamer(nn.Module):
     def _make_pretrain_opt(self):
         config = self._config
         use_amp = True if config.precision == 16 else False
-        if (
-            config.rssm_train_steps > 0
-            or config.from_ckpt is not None
-        ):
+        if config.rssm_train_steps > 0 or config.from_ckpt is not None:
             standard_kwargs = {
                 "lr": config.model_lr,
                 "eps": config.opt_eps,
@@ -162,57 +159,54 @@ class Dreamer(nn.Module):
                 "opt": config.opt,
                 "use_amp": use_amp,
             }
+
+            # World model params (encoder, dynamics, decoder)
             model_params = {
                 "params": list(self._wm.encoder.parameters())
                 + list(self._wm.dynamics.parameters())
+                + list(self._wm.heads["decoder"].parameters())
             }
-            model_params["params"] += list(self._wm.heads["decoder"].parameters())
-            
+
+            # Actor params
             actor_params = {
                 "params": list(self._task_behavior.actor.parameters()),
                 "lr": config.actor["lr"],
                 "eps": config.actor["eps"],
                 "clip": config.actor["grad_clip"],
             }
-            
+
+            # Margin head params (its own optimizer)
             margin_params = {
                 "params": list(self._wm.heads["margin"].parameters()),
-                "lr": 0.0,
+                "lr": config.margin_head.get("lr", config.model_lr),
                 "eps": config.opt_eps,
                 "clip": config.grad_clip,
-                "wd": 0.0,
+                "wd": config.weight_decay,
             }
-            for p in margin_params["params"]:
-                p.requires_grad = False # just in case...
+            self.margin_params = list(margin_params["params"])
+            self.margin_opt = tools.Optimizer("margin_opt", [margin_params], **standard_kwargs)
+            print(f"Optimizer margin_opt has {sum(p.numel() for p in self.margin_params)} variables.")
 
-            self.pretrain_params = (
-                list(model_params["params"])
-                + list(actor_params["params"])
-                + list(margin_params["params"]) # toggle
-            )
-            
-            self.pretrain_opt = tools.Optimizer(
-                "pretrain_opt",
-                [model_params, 
-                 actor_params, 
-                 margin_params # toggle
-                 ],
-                **standard_kwargs,
-            )
-            
-            # toggle
+            # Pretrain optimizer (combined, if you want to toggle margin in/out)
+            self.pretrain_params = list(model_params["params"]) + list(actor_params["params"]) + list(margin_params["params"])
+            self.pretrain_opt = tools.Optimizer("pretrain_opt", [model_params, actor_params, margin_params], **standard_kwargs)
+
+            # Model-only optimizer (excludes margin)
+            excluded_params = set(self._wm.heads["margin"].parameters())
+            model_only_params = [p for p in self._wm.parameters() if p not in excluded_params]
+            self._model_opt = tools.Optimizer("model", model_only_params, config.model_lr, config.opt_eps,
+                                            config.grad_clip, config.weight_decay, opt=config.opt, use_amp=self._wm._use_amp)
+
+            # Extra bookkeeping
             self._opt = self.pretrain_opt._opt
             self._margin_pg_idx = 2
             self._margin_pg = self._opt.param_groups[self._margin_pg_idx]
-            
             self._margin_warmup_step = config.margin_head["warmup_steps"]
             self._margin_active = False
-            
             self.actor_params = list(self._task_behavior.actor.parameters())
-            
-            print(
-                f"Optimizer pretrain has {sum(param.numel() for param in self.pretrain_params)} variables."
-            )
+
+            print(f"Optimizer pretrain has {sum(param.numel() for param in self.pretrain_params)} variables.")
+
 
     def _update_running_metrics(self, metrics):
         for name, value in metrics.items():
@@ -242,185 +236,109 @@ class Dreamer(nn.Module):
                 self._logger.write(fps=True)
 
     def pretrain_model_only(self, data, step=None):
-        metrics = {}
+        # action (batch_size, batch_length, act_dim)
+        # image (batch_size, batch_length, h, w, ch)
+        # reward (batch_size, batch_length)
+        # discount (batch_size, batch_length)
         wm = self._wm
-        actor = self._task_behavior.actor
         data = wm.preprocess(data)
 
-        # toggle: margin warm-up on at warmup_margin_head steps
-        if (step is not None) and (not self._margin_active) and (step >= self._margin_warmup_step):
-            # Unfreeze margin params
-            for p in self._wm.heads["margin"].parameters():
-                p.requires_grad = True
-
-            # Turn on LR / WD for the margin param group
-            mh = self._config.margin_head
-            self._margin_pg["lr"] = mh.get("lr", self._config.model_lr)
-            self._margin_pg["weight_decay"] = mh.get("weight_decay", self._config.weight_decay)
-
-            self._margin_active = True
-
-        with tools.RequiresGrad(wm), tools.RequiresGrad(actor):
-            with torch.amp.autocast("cuda", enabled=wm._use_amp):
+        with tools.RequiresGrad(wm):
+            with torch.amp.autocast(device_type='cuda', enabled=wm._use_amp):
                 embed = wm.encoder(data)
-                post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
-
-                kl_free = self._config.kl_free
-                dyn_scale = self._config.dyn_scale
-                rep_scale = self._config.rep_scale
-                kl_loss, kl_value, dyn_loss, rep_loss = wm.dynamics.kl_loss(
-                    post, prior, kl_free, dyn_scale, rep_scale
+                post, _ = wm.dynamics.observe(
+                    embed, data["action"], data["is_first"]
                 )
-                assert kl_loss.shape == embed.shape[:2], kl_loss.shape
+                    
+        post = {k: v.detach() for k, v in post.items()}
 
-                losses = {}
-                
-                # ramp_start = self._config.margin_head["start_bp"]
-                # ramp_steps = self._config.margin_head["ramp_steps"]
-                # if step is None:
-                #     ramp = 0.0
-                # else:
-                #     t = (step - ramp_start) / float(ramp_steps)
-                #     ramp = float(max(0.0, min(1.0, t)))
-                
-                # feat = wm.dynamics.get_feat(post)
-                # feat_det = feat.detach()
-                # feat_margin = feat_det + ramp * (feat - feat_det)
-                
-                # feat_grad = feat
-                # feat_nograd = feat_det
-                
-                feat = wm.dynamics.get_feat(post)
-                feat_margin = feat.detach()
-                
-                cont_loss = torch.tensor(0.0, device=feat.device)
-                per_head_means = {}
+        feat_detached = wm.dynamics.get_feat(post).detach()
+        safe_data = torch.where(data["failure"] == 0.)
+        unsafe_data = torch.where(data["failure"] == 1.)
+        safe_dataset = feat_detached[safe_data]
+        unsafe_dataset = feat_detached[unsafe_data]
 
-                recon_loss = torch.zeros_like(kl_loss)
-                if step is None or (step <= self._config.rssm_train_steps):
-                    for name, head in wm.heads.items():
-                        if name == "margin":
-                            continue
-                        # f = feat_grad if (name in self._config.grad_heads) else feat_nograd
-                        f = feat
-                        pred = head(f)
-                        items = pred.items() if isinstance(pred, dict) else [(name, pred)]
-                        for iname, ipred in items:
-                            if iname == "cont":
-                                cont_loss = -ipred.log_prob(data[iname])
-                            else:
-                                loss_bt = -ipred.log_prob(data[iname])
-                                if iname == "heat":
-                                    loss_bt *= 3
-                                recon_loss = recon_loss + loss_bt
-                                per_head_means[iname] = loss_bt.mean()
-                                
-                model_loss = kl_loss + recon_loss + cont_loss
-                
-                # margin loss
-                lx_loss = torch.tensor(0.0, device=feat.device)
-                gp_loss = torch.tensor(0.0, device=feat.device)
-                zero_sum_loss = torch.tensor(0.0, device=feat.device)
-                relu_loss = torch.tensor(0.0, device=feat.device)
+        with tools.RequiresGrad(wm.heads["margin"]):
+            with torch.amp.autocast("cuda", enabled=wm._use_amp):
+                pos = wm.heads["margin"](safe_dataset)
+                neg = wm.heads["margin"](unsafe_dataset)
+                N = max(pos.numel(), neg.numel())
+                gp_loss = torch.tensor(0., device=pos.device)
 
-                self._margin_active = step >= self._margin_warmup_step
-                if self._margin_active:
-                    failure = data["failure"]
-                    safe_mask = (failure == 0)
-                    unsafe_mask = ~safe_mask
+                if pos.numel() > 0 and neg.numel() > 0:
+                    # balance safe and unsafe datasets
+                    if N > safe_dataset.shape[0]:
+                        repeat_times = (N + safe_dataset.shape[0] - 1) // safe_dataset.shape[0]
+                        safe_repeated = safe_dataset.repeat((repeat_times,) + (1,) * (safe_dataset.dim() - 1))
+                        indices = torch.randperm(safe_repeated.shape[0], device=safe_dataset.device)[:N]
+                        pos_data = safe_repeated[indices]
+                    else:
+                        pos_data = safe_dataset
 
-                    # detached features for margin training (so only margin head learns)
-                    safe_feat = feat_margin[safe_mask]
-                    unsafe_feat = feat_margin[unsafe_mask]
-
-                    gamma = self._config.gamma_lx
-                    relu_weight = float(getattr(self._config, "relu_weight", 100.0))
-                    gp_weight = float(getattr(self._config, "gp_weight", 10.0))
-                    grad_thresh = float(getattr(self._config, "gp_grad_thresh", 0.1))
-
-                    # classification-style margin terms (ReLU, like your _train_margins)
-                    if safe_feat.numel() > 0:
-                        pos = self._wm.heads["margin"](safe_feat)
-                        relu_loss = relu_loss + torch.relu(gamma - pos).mean()
-                        zero_sum_loss = zero_sum_loss - pos.mean()
-                    if unsafe_feat.numel() > 0:
-                        neg = self._wm.heads["margin"](unsafe_feat)
-                        relu_loss = relu_loss + torch.relu(gamma + neg).mean()
-                        zero_sum_loss = zero_sum_loss + neg.mean()
+                    if N > unsafe_dataset.shape[0]:
+                        repeat_times = (N + unsafe_dataset.shape[0] - 1) // unsafe_dataset.shape[0]
+                        unsafe_repeated = unsafe_dataset.repeat((repeat_times,) + (1,) * (unsafe_dataset.dim() - 1))
+                        indices = torch.randperm(unsafe_repeated.shape[0], device=unsafe_dataset.device)[:N]
+                        neg_data = unsafe_repeated[indices]
+                    else:
+                        neg_data = unsafe_dataset
 
                     # gradient penalty
-                    if self._config.use_gp:
-                        # match batch sizes to N = max(len(pos), len(neg))
-                        with torch.no_grad():
-                            # Forward once to get sizes; handles either set missing gracefully
-                            pos_tmp = self._wm.heads["margin"](safe_feat) if safe_feat.numel() > 0 else torch.tensor([], device=feat.device)
-                            neg_tmp = self._wm.heads["margin"](unsafe_feat) if unsafe_feat.numel() > 0 else torch.tensor([], device=feat.device)
-                            N = max(pos_tmp.numel(), neg_tmp.numel())
+                    alpha = torch.rand(pos_data.shape[0], 1, device=pos_data.device)
+                    interpolates = alpha * pos_data + (1 - alpha) * neg_data
+                    interpolates.requires_grad_(True)
+                    disc_interpolates = wm.heads["margin"](interpolates)
 
-                        def _repeat_to_n(x, N):
-                            if x.numel() == 0:
-                                return x
-                            if N <= x.shape[0]:
-                                return x
-                            reps = (N + x.shape[0] - 1) // x.shape[0]
-                            xr = x.repeat((reps,) + (1,) * (x.dim() - 1))
-                            idx = torch.randperm(xr.shape[0], device=x.device)[:N]
-                            return xr[idx]
+                    gradients = torch.autograd.grad(
+                        outputs=disc_interpolates,
+                        inputs=interpolates,
+                        grad_outputs=torch.ones_like(disc_interpolates),
+                        create_graph=True,
+                        retain_graph=True,
+                        only_inputs=True,
+                    )[0]
+                    gradients = gradients.view(pos_data.shape[0], -1)
+                    gradients_norm = torch.sqrt(torch.sum(gradients**2, dim=1) + 1e-12)
+                    gradient_thresh = 0.1
+                    excess = (gradients_norm - gradient_thresh).clamp(min=0)
+                    gp_loss = (excess ** 2).mean()
 
-                        pos_data = _repeat_to_n(safe_feat, N)
-                        neg_data = _repeat_to_n(unsafe_feat, N)
+                gamma = self._config.gamma_lx
+                relu_loss = torch.tensor(0., device=pos.device)
+                zero_sum_loss = torch.tensor(0., device=pos.device)
 
-                        if pos_data.numel() > 0 and neg_data.numel() > 0:
-                            alpha = torch.rand(pos_data.shape[0], 1, device=feat.device)
-                            interpolates = alpha * pos_data + (1.0 - alpha) * neg_data
-                            interpolates.requires_grad_(True)
+                if pos.numel() > 0:
+                    pos_mean = pos.mean()
+                    zero_sum_loss -= pos_mean
+                    relu_loss += torch.relu(gamma - pos).mean()
 
-                            disc_interpolates = self._wm.heads["margin"](interpolates)
-                            # sum so grad is well-defined as a vector-Jacobian product
-                            grad = torch.autograd.grad(
-                                outputs=disc_interpolates,
-                                inputs=interpolates,
-                                grad_outputs=torch.ones_like(disc_interpolates),
-                                create_graph=True,
-                                retain_graph=True,
-                                only_inputs=True,
-                            )[0]
-                            grad = grad.view(grad.shape[0], -1)
-                            grad_norm = torch.sqrt((grad ** 2).sum(dim=1) + 1e-12)
+                if neg.numel() > 0:
+                    neg_mean = neg.mean()
+                    zero_sum_loss += neg_mean
+                    relu_loss += torch.relu(gamma + neg).mean()
 
-                            # hinged penalty above threshold (your _train_margins logic)
-                            excess = (grad_norm - grad_thresh).clamp(min=0.0)
-                            gp_loss = (excess ** 2).mean()
+                relu_weight = 100
+                gp_weight = 10
+                print('losses', 
+                    round(relu_weight * relu_loss.item(), 2),
+                    round(gp_weight * gp_loss.item(), 2),
+                    round(zero_sum_loss.item(), 2))
 
-                    # put it together exactly like your _train_margins
-                    margin_loss = zero_sum_loss + relu_weight * relu_loss + gp_weight * gp_loss
-                    margin_loss = margin_loss * self._config.margin_head.get("loss_scale", 1.0)
+                loss = zero_sum_loss + relu_weight * relu_loss + gp_weight * gp_loss
 
-                    # add to the overall model loss
-                    model_loss = model_loss + margin_loss
-                else:
-                    margin_loss = torch.tensor(0.0, device=feat.device)
+                self._model_opt(torch.mean(loss), wm.parameters())
+                metrics = self.margin_opt(loss, wm.heads["margin"].parameters())
 
-
-        # logs
-        metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
-        metrics["kl_loss"] = to_np(kl_loss)
-        metrics["dyn_loss"] = to_np(dyn_loss)
-        metrics["rep_loss"] = to_np(rep_loss)
-        metrics["kl_value"] = to_np(torch.mean(kl_value))
-        metrics["lx_loss"] = to_np(lx_loss)
-        metrics["cont_loss"] = to_np(cont_loss)
-        metrics["gp_loss"] = to_np(gp_loss)
-
-        with torch.amp.autocast("cuda", enabled=wm._use_amp):
-            metrics["prior_ent"] = to_np(torch.mean(wm.dynamics.get_dist(prior).entropy()))
-            metrics["post_ent"]  = to_np(torch.mean(wm.dynamics.get_dist(post).entropy()))
+                metrics["sign_loss"] = to_np(relu_loss)
+                metrics["zero_sum_loss"] = to_np(zero_sum_loss)
+                metrics["gp_loss"] = to_np(gp_loss)
 
         metrics = {f"model_only_pretrain/{k}": v for k, v in metrics.items()}
         self._update_running_metrics(metrics)
         self._maybe_log_metrics()
         self._step += 1
         self._logger.step = self._step
+
 
         
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
