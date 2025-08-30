@@ -23,8 +23,8 @@ defaults:
   ground_truth_path: 'gt_dubins/value_function_theta_v_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv2-torch
-  logdir: 'logs/dreamer_dubins_multimodal_v2plus2'
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v2plus2/rssm_ckpt.pt 
+  logdir: 'logs/dreamer_dubins_multimodal_v2plus2_no_heat'
+  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v2plus2_no_heat/rssm_ckpt.pt 
   traindir: null
   evaldir: null
   offline_traindir: ''
