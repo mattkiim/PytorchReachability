@@ -7,6 +7,7 @@ import pickle
 import collections
 import warnings
 from io import BytesIO
+import imageio
 
 import numpy as np
 import torch
@@ -55,35 +56,55 @@ class Dreamer(nn.Module):
         )[config.expl_behavior]().to(self._config.device)
 
     @torch.no_grad()
-    def margin_over_time(self, batch, gamma=None):
+    def margin_over_time(self, batch, gamma=None, warmup=5):
         wm = self._wm
         cfg = self._config
         data = wm.preprocess(batch)
 
         embed = wm.encoder(data)
-        post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
-        feat = wm.dynamics.get_feat(post)
+        actions = data["action"]
+        firsts  = data["is_first"]
+
+        B, T = actions.shape[:2]
+
+        # -------- Warmup latent state --------
+        latent = None
+        for t in range(warmup):
+            latent, _ = wm.dynamics.obs_step(latent, actions[:, t], embed[:, t], firsts[:, t])
+
+        # -------- Rollout after warmup --------
+        posts = []
+        for t in range(warmup, T):
+            latent, _ = wm.dynamics.obs_step(latent, actions[:, t], embed[:, t], firsts[:, t])
+            posts.append(latent)
+
+        # Stack into [B, T-warmup, ...]
+        if posts:
+            post = {k: torch.stack([p[k] for p in posts], dim=1) for k in posts[0]}
+            feat = wm.dynamics.get_feat(post)
+        else:
+            feat = torch.empty((B, 0), device=embed.device)
 
         # margin predictions
         margin_vals = wm.heads["margin"](feat).squeeze(-1)
         gamma = cfg.gamma_lx if gamma is None else gamma
 
         # l(z) per timestep
+        failure = data["failure"].float()[:, warmup:]
         lz = torch.zeros_like(margin_vals)
-        if "failure" in data:
-            failure = data["failure"].float()
-            safe_mask = (failure == 0)
-            unsafe_mask = ~safe_mask
-            lz[safe_mask] = gamma - margin_vals[safe_mask]
-            lz[unsafe_mask] = gamma + margin_vals[unsafe_mask]
-        else:
-            lz = margin_vals
+        safe_mask   = (failure == 0)
+        unsafe_mask = ~safe_mask
+        lz[safe_mask]   = gamma - margin_vals[safe_mask]
+        lz[unsafe_mask] = gamma + margin_vals[unsafe_mask]
 
         return {
-            "margin_vals": margin_vals.cpu().numpy(),
-            "lz": lz.cpu().numpy(),
-            "failure": data["failure"].cpu().numpy()
+            "margin_vals": margin_vals.cpu().numpy(),   # shape [B, T-warmup]
+            "lz": lz.cpu().numpy(),                     # shape [B, T-warmup]
+            "failure": failure.cpu().numpy(),           # aligned per-frame labels
+            "warmup": warmup,
         }
+
+
 
 
 def count_steps(folder):
@@ -101,6 +122,132 @@ def make_dataset(episodes, config):
 
     dataset = tools.from_generator(filtered_generator(), 16)
     return dataset
+
+def has_spike(traj, threshold=0.8):
+    diffs = np.abs(np.diff(traj))
+    # return np.all(diffs <= threshold)
+    return np.any(diffs > threshold)
+
+def save_rgb_heat_video(rgb_frames, heat_frames, filename, fps=10):
+    """
+    rgb_frames: (T, H, W, 3)
+    heat_frames: (T, H, W, 1) or (T, H, W)
+    """
+    if torch.is_tensor(rgb_frames):
+        rgb_frames = rgb_frames.detach().cpu().numpy()
+    if torch.is_tensor(heat_frames):
+        heat_frames = heat_frames.detach().cpu().numpy()
+
+    # Ensure uint8 range
+    if rgb_frames.dtype != np.uint8:
+        rgb_frames = (np.clip(rgb_frames, 0, 1) * 255).astype(np.uint8)
+    if heat_frames.dtype != np.uint8:
+        heat_frames = (np.clip(heat_frames, 0, 1) * 255).astype(np.uint8)
+
+    # If heat is grayscale, expand to 3 channels
+    if heat_frames.ndim == 4 and heat_frames.shape[-1] == 1:
+        heat_frames = np.repeat(heat_frames, 3, axis=-1)
+    elif heat_frames.ndim == 3:  # (T, H, W)
+        heat_frames = np.stack([heat_frames]*3, axis=-1)
+
+    # Concatenate side by side
+    frames = np.concatenate([rgb_frames, heat_frames], axis=2)  # along width
+    imageio.mimsave(filename, frames, fps=fps)
+
+def save_rgb_heat_hotinner_lz_failure_video(rgb_frames, heat_frames, hotinner_frames, lz, failure, filename, fps=10):
+    """
+    Composite video with:
+      - RGB
+      - Heat
+      - Hot-Inner
+      - l(z) curve
+      - True safety label (failure) over time
+    """
+    import matplotlib.pyplot as plt
+    from io import BytesIO
+    import imageio
+    import numpy as np
+    import torch
+
+    # Convert tensors to numpy
+    to_np = lambda x: x.detach().cpu().numpy() if torch.is_tensor(x) else x
+    rgb_frames     = to_np(rgb_frames)
+    heat_frames    = to_np(heat_frames)
+    hotinner_frames= to_np(hotinner_frames) if hotinner_frames is not None else None
+    lz             = to_np(lz)
+    failure        = to_np(failure)
+
+    # Normalize images
+    def to_uint8(x):
+        if x.dtype != np.uint8:
+            return (np.clip(x, 0, 1) * 255).astype(np.uint8)
+        return x
+
+    rgb_frames = to_uint8(rgb_frames)
+    heat_frames = to_uint8(heat_frames)
+    if hotinner_frames is not None:
+        hotinner_frames = to_uint8(hotinner_frames)
+
+    # Expand grayscale to 3 channels
+    def expand3(x):
+        if x is None:
+            return None
+        if x.ndim == 4 and x.shape[-1] == 1:
+            return np.repeat(x, 3, axis=-1)
+        elif x.ndim == 3:
+            return np.stack([x]*3, axis=-1)
+        return x
+
+    heat_frames = expand3(heat_frames)
+    hotinner_frames = expand3(hotinner_frames)
+
+    frames_out = []
+    T = len(lz)
+
+    for t in range(T):
+        n_rows = 5 if hotinner_frames is not None else 4
+        fig, axes = plt.subplots(n_rows, 1, figsize=(5, 12))
+
+        # RGB
+        axes[0].imshow(rgb_frames[t])
+        axes[0].axis("off"); axes[0].set_title("RGB")
+
+        # Heat
+        axes[1].imshow(heat_frames[t])
+        axes[1].axis("off"); axes[1].set_title("Heat")
+
+        row_idx = 2
+        if hotinner_frames is not None:
+            axes[2].imshow(hotinner_frames[t])
+            axes[2].axis("off"); axes[2].set_title("Hot-Inner")
+            row_idx = 3
+
+        # l(z) curve
+        axes[row_idx].plot(lz[:t+1], color="blue", label="tanh(lz)")
+        axes[row_idx].set_xlim(0, T)
+        axes[row_idx].set_ylim(-1.05, 1.05)
+        axes[row_idx].set_title("tanh(l(z)) over time")
+        axes[row_idx].set_xlabel("t"); axes[row_idx].set_ylabel("l(z)")
+
+        # True failure/safety label
+        axes[row_idx+1].plot(failure[:t+1], color="red", drawstyle="steps-post", label="failure")
+        axes[row_idx+1].set_xlim(0, T)
+        axes[row_idx+1].set_ylim(-0.1, 1.1)
+        axes[row_idx+1].set_title("True Safety Label")
+        axes[row_idx+1].set_xlabel("t"); axes[row_idx+1].set_ylabel("failure (0=safe,1=fail)")
+
+        plt.tight_layout()
+
+        # Save frame to numpy
+        buf = BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        img = imageio.v3.imread(buf)
+        frames_out.append(img)
+        plt.close(fig)
+
+    # Save video
+    imageio.mimsave(filename, frames_out, fps=fps)
 
 
 def main(config, ckpt_path=None):
@@ -210,10 +357,27 @@ def main(config, ckpt_path=None):
     res = agent.margin_over_time(batch)
 
     # plotting
-    lz = res["lz"]
+    lz = res["margin_vals"]
     lz = np.tanh(lz)
     B, T = lz.shape
     timesteps = np.arange(T)
+    
+    video_dir = pathlib.Path("spiky_videos", config.name)
+    video_dir.mkdir(exist_ok=True)
+
+    for i in range(B):
+        if has_spike(lz[i], threshold=0.8):
+            rgb_frames = batch["image"][i]
+            heat_frames = batch["heat"][i]
+            hotinner_frames = batch["heat_inner"][i]
+            lz_traj = lz[i]
+            failure_traj = batch["failure"][i]
+
+            out_path = video_dir / f"traj_{i}_spike.mp4"
+            save_rgb_heat_hotinner_lz_failure_video(
+                rgb_frames, heat_frames, hotinner_frames, lz_traj, failure_traj, out_path, fps=20
+            )
+            print(f"Saved RGB+Heat+l(z) video for trajectory {i} → {out_path}")
 
     plt.figure(figsize=(8,5))
     for i in range(min(50, B)):

@@ -80,7 +80,7 @@ defaults:
   # new
   margin_head:
     {layers: 2, loss_scale: 10.0}
-  gamma_lx: 0.75 
+  gamma_lx: 0.0
   dyn_scale: 0.5
   rep_scale: 0.1
   kl_free: 1.0

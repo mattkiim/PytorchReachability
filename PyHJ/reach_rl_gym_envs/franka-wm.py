@@ -20,7 +20,7 @@ class Franka_WM_Env(gym.Env):
         self.low = np.array([
             -1., -1., -np.pi
         ])
-        self.device = 'cuda:0'
+        self.device = 'cuda:1'
 
         self.set_wm(*params)
 
@@ -90,7 +90,7 @@ class Franka_WM_Env(gym.Env):
         
         feat = self.wm.dynamics.get_feat(state).detach()
         with torch.no_grad():  # Disable gradient calculation
-            outputs = torch.tanh(self.wm.heads["margin"](feat))
+            outputs = torch.tanh(0.1 * self.wm.heads["margin"](feat))
             g_xList.append(outputs.detach().cpu().numpy())
         
         safety_margin = np.array(g_xList).squeeze()

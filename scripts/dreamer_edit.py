@@ -35,11 +35,9 @@ from io import BytesIO
 from PIL import Image
 
 to_np = lambda x: x.detach().cpu().numpy()
-from generate_data_traj_cont import get_frame_eval, HeatFrameGenerator
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
-        # print(f"[Dreamer]: {obs_space}, {act_space}"); quit()
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -299,8 +297,12 @@ class Dreamer(nn.Module):
                     )[0]
                     gradients = gradients.view(pos_data.shape[0], -1)
                     gradients_norm = torch.sqrt(torch.sum(gradients**2, dim=1) + 1e-12)
-                    gradient_thresh = 0.1
-                    excess = (gradients_norm - gradient_thresh).clamp(min=0)
+                    # print(f"grad norm mean={gradients_norm.mean().item():.4f}, "
+                    #     f"max={gradients_norm.max().item():.4f}")
+
+                    gradient_thresh = 0.1 # 0.1
+                    # excess = (gradients_norm - gradient_thresh).clamp(min=0)
+                    excess = (gradients_norm - gradient_thresh)
                     gp_loss = (excess ** 2).mean()
 
                 gamma = self._config.gamma_lx

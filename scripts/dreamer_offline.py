@@ -314,93 +314,32 @@ class Dreamer(nn.Module):
                                     loss_bt *= 3
                                 recon_loss = recon_loss + loss_bt
                                 per_head_means[iname] = loss_bt.mean()
-                                
-                model_loss = kl_loss + recon_loss + cont_loss
-                
+
                 # margin loss
                 lx_loss = torch.tensor(0.0, device=feat.device)
-                gp_loss = torch.tensor(0.0, device=feat.device)
-                zero_sum_loss = torch.tensor(0.0, device=feat.device)
-                relu_loss = torch.tensor(0.0, device=feat.device)
-
                 self._margin_active = step >= self._margin_warmup_step
+                
                 if self._margin_active:
                     failure = data["failure"]
                     safe_mask = (failure == 0)
                     unsafe_mask = ~safe_mask
-
-                    # detached features for margin training (so only margin head learns)
                     safe_feat = feat_margin[safe_mask]
                     unsafe_feat = feat_margin[unsafe_mask]
-
                     gamma = self._config.gamma_lx
-                    relu_weight = float(getattr(self._config, "relu_weight", 100.0))
-                    gp_weight = float(getattr(self._config, "gp_weight", 10.0))
-                    grad_thresh = float(getattr(self._config, "gp_grad_thresh", 0.1))
-
-                    # classification-style margin terms (ReLU, like your _train_margins)
+                    
                     if safe_feat.numel() > 0:
                         pos = self._wm.heads["margin"](safe_feat)
-                        relu_loss = relu_loss + torch.relu(gamma - pos).mean()
-                        zero_sum_loss = zero_sum_loss - pos.mean()
+                        # lx_loss += torch.relu(gamma - pos).mean()
+                        lx_loss += torch.nn.functional.softplus(gamma - pos).mean()
                     if unsafe_feat.numel() > 0:
                         neg = self._wm.heads["margin"](unsafe_feat)
-                        relu_loss = relu_loss + torch.relu(gamma + neg).mean()
-                        zero_sum_loss = zero_sum_loss + neg.mean()
+                        # lx_loss += torch.relu(gamma + neg).mean()
+                        lx_loss += torch.nn.functional.softplus(gamma + neg).mean()
+                        
+                    lx_loss = lx_loss * self._config.margin_head["loss_scale"]
 
-                    # gradient penalty
-                    if self._config.use_gp:
-                        # match batch sizes to N = max(len(pos), len(neg))
-                        with torch.no_grad():
-                            # Forward once to get sizes; handles either set missing gracefully
-                            pos_tmp = self._wm.heads["margin"](safe_feat) if safe_feat.numel() > 0 else torch.tensor([], device=feat.device)
-                            neg_tmp = self._wm.heads["margin"](unsafe_feat) if unsafe_feat.numel() > 0 else torch.tensor([], device=feat.device)
-                            N = max(pos_tmp.numel(), neg_tmp.numel())
-
-                        def _repeat_to_n(x, N):
-                            if x.numel() == 0:
-                                return x
-                            if N <= x.shape[0]:
-                                return x
-                            reps = (N + x.shape[0] - 1) // x.shape[0]
-                            xr = x.repeat((reps,) + (1,) * (x.dim() - 1))
-                            idx = torch.randperm(xr.shape[0], device=x.device)[:N]
-                            return xr[idx]
-
-                        pos_data = _repeat_to_n(safe_feat, N)
-                        neg_data = _repeat_to_n(unsafe_feat, N)
-
-                        if pos_data.numel() > 0 and neg_data.numel() > 0:
-                            alpha = torch.rand(pos_data.shape[0], 1, device=feat.device)
-                            interpolates = alpha * pos_data + (1.0 - alpha) * neg_data
-                            interpolates.requires_grad_(True)
-
-                            disc_interpolates = self._wm.heads["margin"](interpolates)
-                            # sum so grad is well-defined as a vector-Jacobian product
-                            grad = torch.autograd.grad(
-                                outputs=disc_interpolates,
-                                inputs=interpolates,
-                                grad_outputs=torch.ones_like(disc_interpolates),
-                                create_graph=True,
-                                retain_graph=True,
-                                only_inputs=True,
-                            )[0]
-                            grad = grad.view(grad.shape[0], -1)
-                            grad_norm = torch.sqrt((grad ** 2).sum(dim=1) + 1e-12)
-
-                            # hinged penalty above threshold (your _train_margins logic)
-                            excess = (grad_norm - grad_thresh).clamp(min=0.0)
-                            gp_loss = (excess ** 2).mean()
-
-                    # put it together exactly like your _train_margins
-                    margin_loss = zero_sum_loss + relu_weight * relu_loss + gp_weight * gp_loss
-                    margin_loss = margin_loss * self._config.margin_head.get("loss_scale", 1.0)
-
-                    # add to the overall model loss
-                    model_loss = model_loss + margin_loss
-                else:
-                    margin_loss = torch.tensor(0.0, device=feat.device)
-
+                model_loss = kl_loss + recon_loss + lx_loss + cont_loss
+                metrics = self.pretrain_opt(torch.mean(model_loss), self.pretrain_params)
 
         # logs
         metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
@@ -410,7 +349,6 @@ class Dreamer(nn.Module):
         metrics["kl_value"] = to_np(torch.mean(kl_value))
         metrics["lx_loss"] = to_np(lx_loss)
         metrics["cont_loss"] = to_np(cont_loss)
-        metrics["gp_loss"] = to_np(gp_loss)
 
         with torch.amp.autocast("cuda", enabled=wm._use_amp):
             metrics["prior_ent"] = to_np(torch.mean(wm.dynamics.get_dist(prior).entropy()))

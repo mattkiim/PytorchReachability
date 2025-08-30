@@ -23,6 +23,7 @@ defaults:
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
   logdir: '/data/mattkiim/runs/heat_actuated2'
   rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2/rssm_ckpt_47999.pt'
+
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -35,7 +36,7 @@ defaults:
   eval_episode_num: 10
   log_every: 2000
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
