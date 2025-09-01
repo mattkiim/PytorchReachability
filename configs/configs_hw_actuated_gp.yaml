@@ -19,13 +19,13 @@ defaults:
   num_train_trajs: 115 ## 3800 in paper
   size: [224, 224]
 
-  # dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
-  # logdir: '/data/mattkiim/runs/heat_actuated2_gp'
-  # rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_gp/rssm_ckpt.pt'
+  dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
+  logdir: '/data/mattkiim/runs/heat_actuated2_gp'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_gp/rssm_ckpt.pt'
 
-  dataset_path: '/data/mattkiim/heat_actuated2_consolidated_5hz.h5'
-  logdir: '/data/mattkiim/runs/heat_actuated2_5hz_gp'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_gp/rssm_ckpt.pt'
+  # dataset_path: '/data/mattkiim/heat_actuated2_consolidated_5hz.h5'
+  # logdir: '/data/mattkiim/runs/heat_actuated2_5hz_gp'
+  # rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_gp/rssm_ckpt.pt'
 
   traindir: null
   evaldir: null

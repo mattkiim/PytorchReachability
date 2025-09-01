@@ -18,12 +18,11 @@ defaults:
   num_trajs: 130 ## 4000 in paper
   num_train_trajs: 115 ## 3800 in paper
   size: [224, 224]
-  dataset_path: '/data/mattkiim/heat_actuated2_consolidated.h5'
-  
-  # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: '/data/mattkiim/runs/heat_actuated2'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2/rssm_ckpt.pt'
-  name: heat_actuated2
+
+  dataset_path: '/data/mattkiim/heat_actuated2_consolidated_5hz.h5'
+  logdir: '/data/mattkiim/runs/heat_actuated2_5hz_gp'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_gp/rssm_ckpt.pt'
+
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -42,7 +41,7 @@ defaults:
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 100001 ## 10000
+  rssm_train_steps: 50000 ## 10000
   
   # Environment
   task: 'franka-wm'
@@ -85,7 +84,7 @@ defaults:
     # {layers: 2, loss_scale: 10.0, lr: 1e-4}
 
 
-  gamma_lx: 0.75 
+  gamma_lx: 0.75
   dyn_scale: 0.5
   rep_scale: 0.1
   kl_free: 1.0
@@ -138,7 +137,7 @@ defaults:
   tau: 0.005 # type=float, default=0.005)
   exploration-noise: 0.1 # type=float, default=0.1)
   epoch: 1 # type=int, default=10)
-  total-episodes: 40 # type=int, default=160)
+  total-episodes: 15 # type=int, default=160)
   step-per-epoch: 40000 # type=int, default=40000)
   step-per-collect: 8 # type=int, default=8)
   update-per-step: 0.125 # type=float, default=0.125)
@@ -178,7 +177,7 @@ defaults:
   include_no_heat_vis: False
   obs_priv_heat: False # whether to use privileged heat in the observation state
 
-  use_gp: False
+  use_gp: True
   gp_weight: 10.0
   relu_weight: 100.0
   gp_grad_thresh: 0.1

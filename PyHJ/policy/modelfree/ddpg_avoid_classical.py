@@ -194,7 +194,7 @@ class avoid_DDPGPolicy_annealing(BasePolicy):
                     action_reg_loss = 1e-2 * (act[:,:6] ** 2).sum(dim=1).mean()
                     action_mag = torch.norm(act[:,:6], dim=-1, keepdim=True)
                     safety_loss = -self.critic(batch.obs, act).mean()
-                    actor_loss = safety_loss + 0.05 * action_reg_loss # encourage smaller actions
+                    actor_loss = safety_loss # + 0.05 * action_reg_loss # encourage smaller actions
                     self.actor_optim.zero_grad()
                     actor_loss.backward()
                     self.actor_optim.step()

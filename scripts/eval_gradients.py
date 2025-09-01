@@ -125,8 +125,8 @@ def make_dataset(episodes, config):
 
 def has_spike(traj, threshold=0.8):
     diffs = np.abs(np.diff(traj))
-    # return np.all(diffs <= threshold)
-    return np.any(diffs > threshold)
+    return np.all(diffs <= threshold)
+    # return np.any(diffs > threshold)
 
 def save_rgb_heat_video(rgb_frames, heat_frames, filename, fps=10):
     """
@@ -362,7 +362,7 @@ def main(config, ckpt_path=None):
     B, T = lz.shape
     timesteps = np.arange(T)
     
-    video_dir = pathlib.Path("spiky_videos", config.name)
+    video_dir = pathlib.Path("eval/not_spiky_videos", config.name)
     video_dir.mkdir(exist_ok=True)
 
     for i in range(B):
