@@ -2,6 +2,7 @@ import os, sys, pathlib, pickle as pkl
 import numpy as np
 import torch
 from torch import nn, optim
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, random_split, DataLoader
 import gymnasium as gym
 import ruamel.yaml as yaml
@@ -108,7 +109,11 @@ class ModelWithTemperature(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.temperature = nn.Parameter(torch.ones(1))
+        self.log_temperature = nn.Parameter(torch.zeros(1))
+
+    @property
+    def temperature(self):
+        return torch.exp(self.log_temperature)
 
     def forward(self, x):
         logits = self.model(x)
@@ -118,7 +123,7 @@ class ModelWithTemperature(nn.Module):
         """Tune temperature on calibration set by minimizing NLL."""
         self.to(device)
         nll_criterion = nn.CrossEntropyLoss()
-        optimizer = optim.LBFGS([self.temperature], lr=0.01, max_iter=50)
+        optimizer = optim.LBFGS([self.log_temperature], lr=0.01, max_iter=50)
 
         def eval():
             loss = 0
@@ -177,7 +182,6 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
         p.requires_grad = False
 
     # --- Calibrate ---
-    # First, precompute embeddings for calibration set
     calib_feats, calib_labels = [], []
     with torch.no_grad():
         for rgb, ir, labels in calib_loader:
@@ -193,7 +197,8 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
     clf_ts.set_temperature(calib_loader_feats, device)
 
     # --- Eval ---
-    correct, total = 0, 0
+    nll_criterion = nn.CrossEntropyLoss(reduction="sum")
+    eval_loss, correct, total = 0.0, 0, 0
     with torch.no_grad():
         for rgb, ir, labels in eval_loader:
             feats = encoder_fn(rgb.to(device), ir.to(device))
@@ -201,8 +206,72 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
             preds = logits.argmax(dim=1).cpu()
             correct += (preds == labels).sum().item()
             total += len(labels)
-    print(f"Eval accuracy ({tag}): {correct/total:.3f}")
+            eval_loss += nll_criterion(logits, labels.to(device)).item()
+
+    eval_acc = correct / total
+    eval_nll = eval_loss / total
+    print(f"Eval results ({tag}): accuracy={eval_acc:.3f}, NLL={eval_nll:.4f}")
+
     return clf_ts
+
+
+
+# -------------------
+# Compute entropy
+# -------------------
+def compute_entropy_and_mi(clf, val_loader, device):
+    """
+    clf: model returning logits
+    val_loader: DataLoader over validation set (feats, labels)
+    """
+    # --- Step 1: empirical label distribution ---
+    all_labels = []
+    with torch.no_grad():
+        for feats, labels in val_loader:   # only 2 items now
+            all_labels.append(labels)
+    all_labels = torch.cat(all_labels).cpu().numpy()
+    classes, counts = np.unique(all_labels, return_counts=True)
+    probs = counts / counts.sum()
+    H_labels = -(probs * np.log(probs + 1e-12)).sum()
+
+    # --- Step 2: NLL on validation set ---
+    nll_loss = 0.0
+    total = 0
+    clf.eval()
+    with torch.no_grad():
+        for feats, labels in val_loader:
+            feats, labels = feats.to(device), labels.to(device)
+            logits = clf(feats)
+            log_probs = F.log_softmax(logits, dim=1)
+            nll_loss += F.nll_loss(log_probs, labels, reduction="sum").item()
+            total += labels.size(0)
+    avg_nll = nll_loss / total
+
+    # --- Step 3: MI bound ---
+    mi_bound = H_labels - avg_nll
+
+    print(f"H(Label) = {H_labels:.4f}, "
+          f"NLL = {avg_nll:.4f}, "
+          f"MI bound = {mi_bound:.4f}")
+
+    return H_labels, avg_nll, mi_bound
+
+
+# -------------------
+# Make eval loader
+# -------------------
+def make_eval_loader(encoder_fn, eval_loader, device):
+    feats_list, labels_list = [], []
+    with torch.no_grad():
+        for rgb, ir, labels in eval_loader:
+            feats = encoder_fn(rgb.to(device), ir.to(device))
+            feats_list.append(feats.cpu())
+            labels_list.append(labels)
+    feats_all = torch.cat(feats_list)
+    labels_all = torch.cat(labels_list)
+    dataset = torch.utils.data.TensorDataset(feats_all, labels_all)
+    return DataLoader(dataset, batch_size=64, shuffle=False)
+
 
 
 # -------------------
@@ -231,7 +300,7 @@ def main():
         p.requires_grad = False
 
     # --- dataset ---
-    all_rgb, all_ir, all_labels = load_dataset("/data/mattkiim/wm_demos128_multimodal_v2plus_12.pkl")
+    all_rgb, all_ir, all_labels = load_dataset("/data/mattkiim/data/wm_demos128_multimodal_v2plus2_6.pkl")
     train_set, calib_set, eval_set = split_dataset(all_rgb, all_ir, all_labels)
     train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
     calib_loader = DataLoader(calib_set, batch_size=64, shuffle=False)
@@ -253,10 +322,19 @@ def main():
     enc_dim_ir   = wm.encoder._heat_cnn.outdim
     enc_dim_both = enc_dim_rgb + enc_dim_ir
 
-    # --- run three experiments ---
-    clf_rgb  = train_and_eval(enc_rgb,  enc_dim_rgb,  train_loader, calib_loader, eval_loader, config.device, "RGB")
-    clf_ir   = train_and_eval(enc_ir,   enc_dim_ir,   train_loader, calib_loader, eval_loader, config.device, "IR")
+    clf_rgb  = train_and_eval(enc_rgb, enc_dim_rgb, train_loader, calib_loader, eval_loader, config.device, "RGB")
+    eval_loader_rgb = make_eval_loader(enc_rgb, eval_loader, config.device)
+    compute_entropy_and_mi(clf_rgb, eval_loader_rgb, config.device)
+
+    clf_ir   = train_and_eval(enc_ir, enc_dim_ir, train_loader, calib_loader, eval_loader, config.device, "IR")
+    eval_loader_ir = make_eval_loader(enc_ir, eval_loader, config.device)
+    compute_entropy_and_mi(clf_ir, eval_loader_ir, config.device)
+
     clf_both = train_and_eval(enc_both, enc_dim_both, train_loader, calib_loader, eval_loader, config.device, "RGB+IR")
+    eval_loader_both = make_eval_loader(enc_both, eval_loader, config.device)
+    compute_entropy_and_mi(clf_both, eval_loader_both, config.device)
+
+
 
 
 if __name__ == "__main__":
