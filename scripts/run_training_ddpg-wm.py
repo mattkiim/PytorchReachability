@@ -751,8 +751,6 @@ def single_rollout(initial_conditions, config, T=100, target=None):
 
     return trajectories_rgb_obs, trajectories_heat_obs
 
-
-
 def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
     from itertools import product
     from matplotlib.colors import ListedColormap
@@ -897,7 +895,7 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
             ax.set_xlim(config.x_min, config.x_max)
             ax.set_ylim(config.y_min, config.y_max)
             ax.set_aspect('equal')
-            ax.set_title(f"Rollouts Θ={theta:.2f} H={heat_value:.2f}", fontsize=8)
+            ax.set_title(f"Rollouts Θ={theta:.2f} H={heat_value:.2f} V={vel:.2f}", fontsize=8)
             ax.axis("off")
             
             # rollout-based confusion matrix text
@@ -923,7 +921,7 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
 
             # ground‑truth overlay (row 0 only)
             if row == 0:
-                key = f"theta_{theta:.4f}_{heat_value:.4f}_rad"
+                key = f"theta_{theta:.4f}_{vel:.4f}_{heat_value:.4f}_rad"
                 if key in gt:
                     gt_slice = gt[key]
                     for ax_group in [axes_lz, axes_v, axes_combined, axes_lz_bin, axes_v_bin, axes_combined_bin]:
