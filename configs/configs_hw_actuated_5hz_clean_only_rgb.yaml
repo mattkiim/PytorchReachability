@@ -20,8 +20,8 @@ defaults:
   size: [224, 224]
 
   dataset_path: '/data/mattkiim/heat_actuated2_consolidated_5hz_clean.h5'
-  logdir: '/data/mattkiim/runs/heat_actuated2_5hz'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/heat_actuated2_5hz_clean_only_rgb'
+  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_clean_only_rgb/rssm_ckpt.pt'
 
   # logdir: '/data/mattkiim/runs/heat_actuated2_5hz_no_ac_reg'
   # rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_no_ac_reg/rssm_ckpt.pt'
@@ -38,7 +38,7 @@ defaults:
   eval_episode_num: 10
   log_every: 2000
   reset_every: 0
-  device: 'cuda:0'
+  device: 'cuda:1'
   compile: True
   precision: 32
   debug: False
