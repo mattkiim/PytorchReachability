@@ -79,13 +79,13 @@ def save_composite_video(cam0, cam2, hotinner, failure, eff_state, actions, file
         axf.set_title("Failure Label")
         axf.set_xlabel("t"); axf.set_ylabel("failure")
 
-        # --- End effector state (row 2, span all 3 cols) ---
-        axe = fig.add_subplot(gs[2, :])
-        for d in range(eff_state.shape[1]):
-            axe.plot(eff_state[:t+1, d], label=f"state{d}")
-        axe.set_xlim(0, T)
-        axe.set_title("End Effector State")
-        axe.legend(fontsize=6, loc="upper right")
+        # # --- End effector state (row 2, span all 3 cols) ---
+        # axe = fig.add_subplot(gs[2, :])
+        # for d in range(eff_state.shape[1]):
+        #     axe.plot(eff_state[:t+1, d], label=f"state{d}")
+        # axe.set_xlim(0, T)
+        # axe.set_title("End Effector State")
+        # axe.legend(fontsize=6, loc="upper right")
 
         # --- Actions (row 3, span all 3 cols) ---
         axa = fig.add_subplot(gs[3, :])
@@ -111,7 +111,7 @@ def save_composite_video(cam0, cam2, hotinner, failure, eff_state, actions, file
 
 def main(cfg, ckpt_path=None):
     # Load dataset (example: from pickle/h5)
-    path = "/data/mattkiim/heat_actuated2_consolidated.h5"
+    path = "/data/mattkiim/heat_actuated2_consolidated_clean.h5"
     i = 0
     with h5py.File(path, "r") as f:  # use "r+" only if you need to write
         for run in f:  # each top-level group name
@@ -120,8 +120,8 @@ def main(cfg, ckpt_path=None):
             video_dir.mkdir(parents=True, exist_ok=True)
             
             i += 1
-            # if i > 10:
-            #     break
+            if i != 10:
+                continue
 
             cam0 = f[run]["camera_0"]   # (T,H,W,3)
             cam2 = f[run]["camera_2"]   # (T,H,W,3)
@@ -142,6 +142,7 @@ def main(cfg, ckpt_path=None):
             actions = f[run]["actions"]         # (T,A)
 
             out_path = video_dir / f"traj_{i}.mp4"
+            print(run, i)
             save_composite_video(cam0, cam2, heat_inner, failure, eff_state, actions, out_path, fps=20)
 
 
