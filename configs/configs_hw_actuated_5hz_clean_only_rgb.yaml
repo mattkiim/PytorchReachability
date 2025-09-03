@@ -38,7 +38,7 @@ defaults:
   eval_episode_num: 10
   log_every: 2000
   reset_every: 0
-  device: 'cuda:1'
+  device: 'cuda:0'
   compile: True
   precision: 32
   debug: False
