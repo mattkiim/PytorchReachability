@@ -124,7 +124,10 @@ observation_space = gym.spaces.Dict({
         'policy': policy_obs_space,
         # 'wrist_cam': cam_obs_space,
     })
-action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
+
+low  = np.array([-1.0, -1.0, -0.1, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
+high = np.array([ 1.0,  1.0,  0.1,  1.0,  1.0,  1.0,  1.0], dtype=np.float32)
+action_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
 
 
 config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
@@ -139,9 +142,6 @@ state_dict = {k[14:]:v for k,v in checkpoint['agent_state_dict'].items() if '_wm
 # print(state_dict['encoder._cnn.layers.0.weight'].shape)
 # quit()
 wm.load_state_dict(state_dict)
-
-# NOTE: you can replace this with the dataset you made for the dubins wm training
-config.dataset_path = f"{config.dataset_path}"
 
 config.batch_size = 1
 config.batch_length = 2
@@ -166,10 +166,7 @@ assert hasattr(env, 'action1_space') #and hasattr(env, 'action2_space'), "The en
 args.state_shape = 544
 args.action_shape = env.action_space.shape or env.action_space.n
 
-args.max_action = env.action_space.high[0]
-
-args.action1_shape = env.action1_space.shape or env.action1_space.n
-args.max_action1 = env.action1_space.high[0]
+args.max_action = 1.0
 
 
 train_envs = DummyVectorEnv(
