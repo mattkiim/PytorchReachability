@@ -20,8 +20,8 @@ defaults:
   size: [224, 224]
 
   dataset_path: '/data/mattkiim/merged_5hz.h5'
-  logdir: '/data/mattkiim/runs/merged_5hz'
-  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/merged_5hz_fast'
+  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast/rssm_ckpt.pt'
 
   traindir: null
   evaldir: null
@@ -41,7 +41,7 @@ defaults:
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 50000 ## 10000
+  rssm_train_steps: 20000 ## 10000
   
   # Environment
   task: 'franka-wm'
@@ -79,8 +79,8 @@ defaults:
     {layers: 2, loss_scale: 1.0, outscale: 1.0}
   # new
   margin_head:
-    {layers: 2, loss_scale: 10.0, lr: 5e-4, weight_decay: 0.0, warmup_steps: 25000}
-    # {layers: 2, loss_scale: 10.0, warmup_steps: 5000, start_bp: 25000, ramp_steps: 10000, lr: 1e-4, weight_decay: 0.0}
+    {layers: 2, loss_scale: 10.0, lr: 5e-4, weight_decay: 0.0, warmup_steps: 10000}
+    # {layers: 2, loss_scale: 10.0, warmup_steps: 5000, start_bp: 10000, ramp_steps: 10000, lr: 1e-4, weight_decay: 0.0}
     # {layers: 2, loss_scale: 10.0, lr: 1e-4}
 
 
