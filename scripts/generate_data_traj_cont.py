@@ -36,7 +36,7 @@ class HeatFrameGenerator:
         self.radius = None
         self.vehicle_temp = DEFAULT_VEHICLE_TEMP
         self.vehicle_temp_rgb = DEFAULT_RGB_VEHICLE_TEMP
-        self.vehicle_has_entered = False
+        # self.vehicle_has_entered = False
 
     def _compute_geometry(self, img_shape):
         self.H, self.W = img_shape[:2]
@@ -56,10 +56,10 @@ class HeatFrameGenerator:
         r1 = self.radius
         return (d2 >= (r1 - 1)**2) & (d2 <= (r1 + 1)**2)
     
-    def reset_vehicle_heat(self):
-      self.vehicle_temp = DEFAULT_VEHICLE_TEMP
-      self.vehicle_temp_rgb = DEFAULT_RGB_VEHICLE_TEMP
-      self.vehicle_has_entered = False
+    def reset_vehicle_heat(self, heat=1.0):
+      self.vehicle_temp = heat * DEFAULT_VEHICLE_TEMP
+      self.vehicle_temp_rgb = heat * DEFAULT_RGB_VEHICLE_TEMP
+      # self.vehicle_has_entered = False
     
     def show_heat_image(self, img_heat_array, save_path="test.png"):
       img_heat_array = img_heat_array.squeeze(-1).astype(np.uint8)
@@ -621,10 +621,11 @@ def get_frame_eval(states, config):
   return img_array
 
 def get_init_state(config):
-  # don't sample inside the failure set
   states = torch.zeros(4)
-  # while np.linalg.norm(states[:2] - np.array([config.obs_x, config.obs_y])) < config.obs_r:
+  # states = torch.zeros(5)
+
   states[:2] = torch.rand(2)
+  # states[-1] = torch.rand()
   
   states[0] *= (config.x_max-config.buffer) - (config.x_min + config.buffer)
   states[1] *= (config.y_max-config.buffer) - (config.y_min + config.buffer)
@@ -644,6 +645,7 @@ def get_init_state(config):
     states[1] = 0.
     states[2] = 0.
     states[3] = 1.
+    # states[4] = 0.5
     
   return states
 
@@ -663,8 +665,11 @@ def gen_one_traj_img(config, curr_traj_count=0):
   v_min = getattr(config, 'v_min', 0.0)
   v_max = getattr(config, 'v_max', 1.0)
 
+  heat = torch.rand(1).item()
+  # print(heat)
+
   heat_gen = HeatFrameGenerator(config)
-  heat_gen.reset_vehicle_heat()
+  heat_gen.reset_vehicle_heat(heat=heat) # TODO: pass in heat
   
   for t in range(config.data_length):
     # random between -u_max and u_max
