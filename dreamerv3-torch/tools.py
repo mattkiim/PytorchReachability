@@ -300,18 +300,22 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             )
             
             heat_inner = traj["heat_inner"][t]
-            frame_wax = heat_inner > 0.0
-            frame_wax_pixel_count = np.sum(heat_inner)
-            frac_too_hot = np.sum(heat_inner[frame_wax] > 0.6) / frame_wax_pixel_count if frame_wax_pixel_count > 0 else 0.0
+            if not getattr(config, "avg", False):
+                # print(123); quit()
+                frame_wax = heat_inner > 0.0
+                frame_wax_pixel_count = np.sum(frame_wax)
+                frac_too_hot = np.sum(heat_inner[frame_wax] > 0.6) / frame_wax_pixel_count if frame_wax_pixel_count > 0 else 0.0
+                
+                heat_failure = frac_too_hot > 0.5
             
-            heat_failure = frac_too_hot > 0.5
-            
-            # heat_inner = traj["heat_inner"][t]
-            # # print(heat_inner.shape); quit()
-            # fraction_super_hot = np.sum(heat_inner > 0.8) / heat_inner.size
-            
-            # heat_failure = fraction_super_hot > 0.04 
-            
+            else:
+                nonzero_heat_inner = heat_inner # [heat_inner > 0]
+                if nonzero_heat_inner.size > 0: # never gets invoked with the commented out [heat_inner > 0]
+                    heat_avg = np.mean(nonzero_heat_inner)
+                else:
+                    heat_avg = 0.0
+                heat_failure = heat_avg > 0.1 # 0.5
+
             # transition["obs_state"] = np.array([0.]) # fill with dummy value
             transition["privileged_state"] = traj['obs']['priv_state'][t]
             transition["obs_state"] = traj["obs"]["priv_state"][t]

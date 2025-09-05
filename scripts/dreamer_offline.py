@@ -138,6 +138,7 @@ class Dreamer(nn.Module):
             self._wm.dynamics.get_feat(s)
         ).mode()
         metrics.update(self._task_behavior._train(start, reward)[-1])
+        quit()
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -257,6 +258,9 @@ class Dreamer(nn.Module):
             mh = self._config.margin_head
             self._margin_pg["lr"] = mh.get("lr", self._config.model_lr)
             self._margin_pg["weight_decay"] = mh.get("weight_decay", self._config.weight_decay)
+
+            print(self._margin_pg["lr"], self._margin_pg["weight_decay"])
+
 
             self._margin_active = True
 
@@ -684,18 +688,8 @@ def main(config):
         agent._step = agent._logger.step // config.action_repeat
         agent._wm._step = agent._step
         print("Done loading")
-    # print(agent._wm._step); quit()
+        print(agent._wm._step)
     
-        try:
-            print("Warming up model with one train batch to stabilize state...")
-            agent.train()  # Ensure training mode
-            warmup_batch = next(agent._dataset)
-            agent._train(warmup_batch)
-            print("Warmup step completed.")
-            
-        except Exception as e:
-            print("[Warning] Warmup failed:", e)
-
     def log_plot(title, data):
         buf = BytesIO()
         plt.plot(np.arange(len(data)), data)

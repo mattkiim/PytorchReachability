@@ -125,8 +125,8 @@ observation_space = gym.spaces.Dict({
         # 'wrist_cam': cam_obs_space,
     })
 
-low  = np.array([-1.0, -1.0, -0.1, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
-high = np.array([ 1.0,  1.0,  0.1,  1.0,  1.0,  1.0,  1.0], dtype=np.float32)
+low  = np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
+high = np.array([ 1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0], dtype=np.float32)
 action_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
 
 

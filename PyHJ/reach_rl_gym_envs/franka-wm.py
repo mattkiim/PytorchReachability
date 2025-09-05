@@ -20,7 +20,7 @@ class Franka_WM_Env(gym.Env):
         self.low = np.array([
             -1., -1., -np.pi
         ])
-        self.device = 'cuda:0'
+        self.device = 'cuda:1'
 
         self.set_wm(*params)
 

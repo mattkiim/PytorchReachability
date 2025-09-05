@@ -111,7 +111,7 @@ def save_composite_video(cam0, cam2, hotinner, failure, eff_state, actions, file
 
 def main(cfg, ckpt_path=None):
     # Load dataset (example: from pickle/h5)
-    path = "/data/mattkiim/heat_actuated2_consolidated_clean.h5"
+    path = "/data/mattkiim/merged_5hz.h5"
     i = 0
     with h5py.File(path, "r") as f:  # use "r+" only if you need to write
         for run in f:  # each top-level group name
@@ -120,8 +120,8 @@ def main(cfg, ckpt_path=None):
             video_dir.mkdir(parents=True, exist_ok=True)
             
             i += 1
-            if i != 10:
-                continue
+            # if i != 10:
+                # continue
 
             cam0 = f[run]["camera_0"]   # (T,H,W,3)
             cam2 = f[run]["camera_2"]   # (T,H,W,3)
@@ -135,7 +135,16 @@ def main(cfg, ckpt_path=None):
                 pixel_count = np.sum(frame > 0.0)
                 frac_too_hot = np.sum(frame > 0.6) / pixel_count if pixel_count > 0 else 0.0
                 failure.append(frac_too_hot > 0.5)
-            failure = np.array(failure, dtype=np.int32)  # shape (T,)
+
+            for t in range(T):
+                frame = heat_inner[t]
+                nonzero_vals = frame[frame > 0]
+                if nonzero_vals.size > 0:
+                    heat_avg = np.mean(nonzero_vals)
+                else:
+                    heat_avg = 0.0
+                failure.append(heat_avg > 0.5)
+            failure = np.array(failure, dtype=np.int32)
             
             # print(failure.shape)
             eff_state = f[run]["ee_states"] # (T,D)
