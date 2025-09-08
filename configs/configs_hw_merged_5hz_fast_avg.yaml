@@ -15,11 +15,11 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  # num_trajs: 160 ## 4000 in paper
-  # num_train_trajs: 140 ## 3800 in paper
+  num_trajs: 160 ## 4000 in paper
+  num_train_trajs: 140 ## 3800 in paper
 
-  num_trajs: 2 ## 4000 in paper
-  num_train_trajs: 1 ## 3800 in paper
+  # num_trajs: 2 ## 4000 in paper
+  # num_train_trajs: 1 ## 3800 in paper
 
 
   size: [224, 224]
@@ -27,8 +27,8 @@ defaults:
   avg: True
   rgb_only: False
 
-  dataset_path: '/data/mattkiim/hw_test.h5'
-  # dataset_path: '/data/mattkiim/merged_5hz.h5'
+  # dataset_path: '/data/mattkiim/hw_test.h5'
+  dataset_path: '/data/mattkiim/merged_5hz.h5'
   logdir: '/data/mattkiim/runs/merged_5hz_fast_avg'
   rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg/rssm_ckpt.pt'
 
