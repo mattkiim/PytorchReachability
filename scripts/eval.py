@@ -125,95 +125,6 @@ class Dreamer(nn.Module):
         return obs_loss.item()
 
     @torch.no_grad()
-    def eval_full_metrics(self, data):
-        wm = self._wm
-        cfg = self._config
-        data = wm.preprocess(data)
-
-        with torch.amp.autocast("cuda", enabled=wm._use_amp):
-            embed = wm.encoder(data)
-            post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
-
-            kl_free = cfg.kl_free
-            dyn_scale = cfg.dyn_scale
-            rep_scale = cfg.rep_scale
-            kl_loss_bt, kl_value_bt, dyn_loss_bt, rep_loss_bt = wm.dynamics.kl_loss(
-                post, prior, kl_free, dyn_scale, rep_scale
-            )
-            kl_loss = kl_loss_bt.mean()
-            dyn_loss = dyn_loss_bt.mean()
-            rep_loss = rep_loss_bt.mean()
-            kl_value = kl_value_bt.mean()
-
-            feat = wm.dynamics.get_feat(post)
-
-            preds = {}
-            for name, head in wm.heads.items():
-                pred = head(feat)
-                if isinstance(pred, dict):
-                    preds.update(pred)
-                else:
-                    preds[name] = pred
-
-            per_head_means = {}
-            recon_terms = []
-            cont_loss = torch.tensor(0.0, device=feat.device)
-
-            for name, pred in preds.items():
-                if name == "margin":
-                    continue
-                if name not in data:
-                    continue
-                loss_bt = -pred.log_prob(data[name])  # [B,T]
-                mean_loss = loss_bt.mean()
-                per_head_means[name] = mean_loss
-                if name == "cont":
-                    cont_loss = mean_loss
-                else:
-                    recon_terms.append(mean_loss)
-
-            recon_sum = torch.stack(recon_terms).sum() if len(recon_terms) else torch.tensor(0.0, device=feat.device)
-
-            lx_loss = torch.tensor(0.0, device=feat.device)
-            if "failure" in data:
-                failure = data["failure"]
-                safe_mask = (failure == 0)
-                unsafe_mask = ~safe_mask
-
-                safe_feat = feat[safe_mask]
-                unsafe_feat = feat[unsafe_mask]
-
-                gamma = cfg.gamma_lx
-                if safe_feat.numel() > 0:
-                    pos = wm.heads["margin"](safe_feat)
-                    lx_loss = lx_loss + torch.relu(gamma - pos).mean()
-                if unsafe_feat.numel() > 0:
-                    neg = wm.heads["margin"](unsafe_feat)
-                    lx_loss = lx_loss + torch.relu(gamma + neg).mean()
-                lx_loss = lx_loss * cfg.margin_head["loss_scale"]
-
-            total_eval_loss = recon_sum + lx_loss
-
-            prior_ent = wm.dynamics.get_dist(prior).entropy().mean()
-            post_ent = wm.dynamics.get_dist(post).entropy().mean()
-
-        out = {
-            "recon_sum": to_np(recon_sum),
-            "lx_loss": to_np(lx_loss),
-            "total_loss": to_np(total_eval_loss),
-            "cont_loss": to_np(cont_loss),
-            "kl_loss": to_np(kl_loss),
-            "dyn_loss": to_np(dyn_loss),
-            "rep_loss": to_np(rep_loss),
-            "kl_value": to_np(kl_value),
-            "prior_ent": to_np(prior_ent),
-            "post_ent": to_np(post_ent),
-        }
-        for name, l in per_head_means.items():
-            out[f"recon/{name}"] = to_np(l)
-        return out
-
-    @torch.no_grad()
     def evaluate_full_metrics(self, dataset, batches=10, prefix="eval"):
         logs = {}
         for _ in range(batches):
@@ -426,6 +337,116 @@ class Dreamer(nn.Module):
 
         return out
 
+    def eval_full_metrics(self, data):
+        """
+        Held-out evaluation that logs:
+          - Per-head reconstruction means (excluding 'margin' from recon_sum; 'cont' logged separately)
+          - Failure-margin loss (lx_loss)
+          - KL / dyn / rep, entropies
+          - total_loss := recon_sum + lx_loss  (selection metric for HW expts)
+        No gradients and no optimizer step.
+        """
+        wm = self._wm
+        cfg = self._config
+        data = wm.preprocess(data)
+
+        with torch.amp.autocast("cuda", enabled=wm._use_amp):
+            # Encode and infer posterior over the observed sequence
+            embed = wm.encoder(data)
+            post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+
+            # KL terms (for logging)
+            kl_free = cfg.kl_free
+            dyn_scale = cfg.dyn_scale
+            rep_scale = cfg.rep_scale
+            kl_loss_bt, kl_value_bt, dyn_loss_bt, rep_loss_bt = wm.dynamics.kl_loss(
+                post, prior, kl_free, dyn_scale, rep_scale
+            )
+            kl_loss = kl_loss_bt.mean()
+            dyn_loss = dyn_loss_bt.mean()
+            rep_loss = rep_loss_bt.mean()
+            kl_value = kl_value_bt.mean()
+
+            feat = wm.dynamics.get_feat(post)
+
+            # ---------- Predict with all heads ----------
+            preds = {}
+            for name, head in wm.heads.items():
+                pred = head(feat)
+                if isinstance(pred, dict):
+                    preds.update(pred)
+                else:
+                    preds[name] = pred
+
+            # ---------- Per-head losses ----------
+            per_head_means = {}
+            recon_terms = []  # exclude 'margin'; keep 'cont' separate
+            cont_loss = torch.tensor(0.0, device=feat.device)
+
+            for name, pred in preds.items():
+                if name == "margin":
+                    continue  # margin is handled separately
+                if name not in data:
+                    continue  # skip heads with no target
+                loss_bt = -pred.log_prob(data[name])  # [B, T]
+                if name == "heat":
+                    loss_bt *= 3
+                mean_loss = loss_bt.mean()
+                per_head_means[name] = mean_loss
+                if name == "cont":
+                    cont_loss = mean_loss
+                else:
+                    recon_terms.append(mean_loss)
+
+            recon_sum = torch.stack(recon_terms).sum() if len(recon_terms) else torch.tensor(0.0, device=feat.device)
+
+            # ---------- Failure-margin loss ----------
+            lx_loss = torch.tensor(0.0, device=feat.device)
+            if "failure" in data:
+                failure = data["failure"]  # 1=unsafe, 0=safe
+                safe_mask = (failure == 0)
+                unsafe_mask = ~safe_mask
+
+                safe_feat = feat[safe_mask]
+                unsafe_feat = feat[unsafe_mask]
+
+                gamma = cfg.gamma_lx
+                if safe_feat.numel() > 0:
+                    pos = wm.heads["margin"](safe_feat)
+                    # lx_loss = lx_loss + torch.relu(gamma - pos).mean()
+                    lx_loss = lx_loss + torch.nn.functional.softplus(gamma - pos).mean()
+                if unsafe_feat.numel() > 0:
+                    neg = wm.heads["margin"](unsafe_feat)
+                    # lx_loss = lx_loss + torch.relu(gamma + neg).mean()
+                    lx_loss = lx_loss + torch.nn.functional.softplus(gamma + neg).mean()
+                lx_loss = lx_loss * cfg.margin_head["loss_scale"]
+
+            # ---------- Selection metric ----------
+            total_eval_loss = recon_sum + lx_loss
+
+            # Entropies
+            prior_ent = wm.dynamics.get_dist(prior).entropy().mean()
+            post_ent = wm.dynamics.get_dist(post).entropy().mean()
+
+        # Package numpy scalars
+        out = {
+            "recon_sum": to_np(recon_sum),
+            "lx_loss": to_np(lx_loss),
+            "total_loss": to_np(total_eval_loss),  # <-- use for checkpoint "success"
+            "cont_loss": to_np(cont_loss),
+            "kl_loss": to_np(kl_loss),
+            "dyn_loss": to_np(dyn_loss),
+            "rep_loss": to_np(rep_loss),
+            "kl_value": to_np(kl_value),
+            "prior_ent": to_np(prior_ent),
+            "post_ent": to_np(post_ent),
+        }
+        # Per-head breakdowns
+        for name, l in per_head_means.items():
+            out[f"recon/{name}"] = to_np(l)
+        return out
+
+
 
 def count_steps(folder):
     return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
@@ -537,13 +558,25 @@ def main(config, ckpt_path=None, eval_batches=None):
     # ------------- Load checkpoint -------------
     if ckpt_path is None:
         ckpt_path = config.rssm_ckpt_path
+        ckpt_path = "/data/mattkiim/runs/merged_5hz_fast_avg_gp/latest.pt"
     ckpt_path = pathlib.Path(ckpt_path)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, weights_only=False, map_location=config.device)
-    agent.load_state_dict(checkpoint["agent_state_dict"], strict=False)
+    agent.load_state_dict(checkpoint["agent_state_dict"], strict=True)
+
+    agent.eval(); agent._wm.eval(); agent._task_behavior.eval()
+    config.eval_disable_aug = True
+
+
+    recon_mean, total_mean = agent.evaluate_full_metrics(
+        eval_dataset, batches=getattr(config, "eval_batches", 10), prefix="loaded"
+    )
+    print(f"Initial eval after load — recon_mean: {recon_mean:.4f}, total_mean: {total_mean:.4f}")
+    quit()
+
     # Optims are irrelevant for eval
 
     # ------------- Optional: video predictions on eval set -------------

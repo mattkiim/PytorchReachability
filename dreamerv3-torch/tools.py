@@ -75,6 +75,8 @@ class Logger:
 
         name = str(logdir).split('/')[-2] + '_' + str(logdir).split('/')[-1]
         # Initialize WandB
+        if wandb.run is not None:
+            wandb.finish()
         wandb.init(project="hw", config={"logdir": str(logdir)}, name=name)
 
     def config(self, config_dict):
@@ -250,7 +252,7 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
             }
             
 
-            if 'camera_2' in traj_group: # FIXME: not sure if this works...
+            if 'camera_2' in traj_group:
                 traj['obs']['heat'] = traj_group['camera_2'][:, :, :, :1]
                 traj['heat_inner'] = traj_group['hot_inner'][:]
             else:

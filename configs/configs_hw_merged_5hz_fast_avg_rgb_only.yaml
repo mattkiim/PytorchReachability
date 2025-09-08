@@ -15,16 +15,25 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 130 ## 4000 in paper
-  num_train_trajs: 115 ## 3800 in paper
+  num_trajs: 160 ## 4000 in paper
+  num_train_trajs: 140 ## 3800 in paper
+
+  # num_trajs: 2 ## 4000 in paper
+  # num_train_trajs: 1 ## 3800 in paper
+
+
   size: [224, 224]
 
-  dataset_path: '/data/mattkiim/heat_actuated2_consolidated_5hz.h5'
-  logdir: '/data/mattkiim/runs/heat_actuated2_5hz'
-  rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz/rssm_ckpt.pt'
+  avg: True
+  rgb_only: True
 
-  # logdir: '/data/mattkiim/runs/heat_actuated2_5hz_no_ac_reg'
-  # rssm_ckpt_path: '/data/mattkiim/runs/heat_actuated2_5hz_no_ac_reg/rssm_ckpt.pt'
+  # dataset_path: '/data/mattkiim/hw_test.h5'
+  dataset_path: '/data/mattkiim/merged_5hz.h5'
+  logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only'
+  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only/rssm_ckpt.pt'
+
+  # logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz'
+  # rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz/rssm_ckpt.pt'
 
   traindir: null
   evaldir: null
@@ -34,17 +43,17 @@ defaults:
   deterministic_run: True
   steps: 1e6
   parallel: False
-  eval_every: 2000
+  eval_every: 500
   eval_episode_num: 10
-  log_every: 2000
+  log_every: 500
   reset_every: 0
-  device: 'cuda:0'
+  device: 'cuda:1'
   compile: True
   precision: 32
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 50000 ## 10000
+  rssm_train_steps: 20000 ## 10000
   
   # Environment
   task: 'franka-wm'
@@ -82,8 +91,8 @@ defaults:
     {layers: 2, loss_scale: 1.0, outscale: 1.0}
   # new
   margin_head:
-    # {layers: 2, loss_scale: 10.0, lr: 5e-4, weight_decay: 0.0, warmup_steps: 25000}
-    {layers: 2, loss_scale: 10.0, warmup_steps: 5000, start_bp: 25000, ramp_steps: 10000, lr: 1e-4, weight_decay: 0.0}
+    {layers: 2, loss_scale: 10.0, lr: 5e-4, weight_decay: 0.0, warmup_steps: 10000}
+    # {layers: 2, loss_scale: 10.0, warmup_steps: 5000, start_bp: 10000, ramp_steps: 10000, lr: 1e-4, weight_decay: 0.0}
     # {layers: 2, loss_scale: 10.0, lr: 1e-4}
 
 

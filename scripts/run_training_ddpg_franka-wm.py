@@ -144,7 +144,7 @@ state_dict = {k[14:]:v for k,v in checkpoint['agent_state_dict'].items() if '_wm
 wm.load_state_dict(state_dict)
 
 config.batch_size = 1
-config.batch_length = 2
+config.batch_length = 5
 config.dataset_path = f"{config.dataset_path}"
 
 offline_eps = collections.OrderedDict()
@@ -321,7 +321,16 @@ if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
-for iter in range(args.total_episodes):
+warmup = 1
+
+for iter in range(warmup+args.total_episodes):
+    if iter  < warmup:
+        policy._gamma = 0 # for warming up the value fn
+        policy.warmup = True
+    else:
+        policy._gamma = config.gamma_pyhj
+        policy.warmup = False
+        
     if args.continue_training_epoch is not None:
         print("episodes: {}, remaining episodes: {}".format(epoch//args.epoch, args.total_episodes - iter))
     else:

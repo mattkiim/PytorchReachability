@@ -546,7 +546,7 @@ def make_dataset(episodes, config):
     dataset = tools.from_generator(generator, config.batch_size)
     return dataset
 
-def main(config):
+def main1(config):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
@@ -629,9 +629,9 @@ def main(config):
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
     
-    config.dataset_path = config.dataset_path
-    tools.fill_expert_dataset_dubins(config, expert_eps)
-    expert_dataset = make_dataset(expert_eps, config)
+    # config.dataset_path = config.dataset_path
+    # tools.fill_expert_dataset_dubins(config, expert_eps)
+    # expert_dataset = make_dataset(expert_eps, config)
     
     # validation replay buffer
     expert_val_eps = collections.OrderedDict()
@@ -647,7 +647,7 @@ def main(config):
         action_space,
         config,
         logger,
-        expert_dataset,
+        None,
     ).to(config.device)
         
     step = logger.step
@@ -655,8 +655,21 @@ def main(config):
     
     if (logdir / "latest.pt").exists():
         print("Loading from checkpoint...")
-        checkpoint = torch.load(logdir / "latest.pt", weights_only=False)
-        agent.load_state_dict(checkpoint["agent_state_dict"])
+        
+        ckpt_path = logdir / "latest.pt"
+        ckpt_path = "/data/mattkiim/runs/merged_5hz_fast_avg_gp/latest.pt"
+        
+        checkpoint = torch.load(ckpt_path, weights_only=False, map_location=config.device)
+
+        agent.eval(); agent._wm.eval(); agent._task_behavior.eval()
+        config.eval_disable_aug = True
+
+        print(logdir)
+        agent.load_state_dict(checkpoint["agent_state_dict"], strict=True) # this is the problematic line? 
+        # for k in checkpoint["agent_state_dict"].keys():
+        #     print(k)
+
+        # quit()
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
         
         agent._should_pretrain._once = False
@@ -666,17 +679,13 @@ def main(config):
         agent._step = agent._logger.step // config.action_repeat
         agent._wm._step = agent._step
         print("Done loading")
-    # print(agent._wm._step); quit()
-    
-        try:
-            print("Warming up model with one train batch to stabilize state...")
-            agent.train()  # Ensure training mode
-            warmup_batch = next(agent._dataset)
-            agent._train(warmup_batch)
-            print("Warmup step completed.")
-            
-        except Exception as e:
-            print("[Warning] Warmup failed:", e)
+
+        
+        recon_mean, total_mean = agent.evaluate_full_metrics(
+            eval_dataset, batches=getattr(config, "eval_batches", 10), prefix="loaded"
+        )
+        print(f"Initial eval after load — recon_mean: {recon_mean:.4f}, total_mean: {total_mean:.4f}")
+        quit()
 
     def log_plot(title, data):
         buf = BytesIO()
@@ -789,6 +798,240 @@ def main(config):
             exp_data = next(expert_dataset)
             agent.pretrain_model_only(exp_data, step)
 
+def main(config, ckpt_path=None, eval_batches=None):
+    tools.set_seed_everywhere(config.seed)
+    if config.deterministic_run:
+        tools.enable_deterministic_run()
+
+    logdir = pathlib.Path(config.logdir).expanduser()
+    config.traindir = config.traindir or logdir / "train_eps"
+    config.evaldir = config.evaldir or logdir / "eval_eps"
+    # Maintain logging schedule but we won't train
+    config.steps //= config.action_repeat
+    config.eval_every //= config.action_repeat
+    config.log_every //= config.action_repeat
+    config.time_limit //= config.action_repeat
+
+    print("Logdir", logdir)
+    logdir.mkdir(parents=True, exist_ok=True)
+    config.traindir.mkdir(parents=True, exist_ok=True)
+    config.evaldir.mkdir(parents=True, exist_ok=True)
+
+    # Logger step reflects environment steps (kept for consistency)
+    step = count_steps(config.traindir)
+    logger = tools.Logger(logdir, config.action_repeat * step)
+
+    # ------------- Spaces (unchanged) -------------
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
+    bounds = np.array([
+        [config.x_min, config.x_max],
+        [config.y_min, config.y_max],
+        [0, 2 * np.pi],
+        [0, 1],
+    ])
+    low, high = bounds[:, 0], bounds[:, 1]
+    midpoint = (low + high) / 2.0
+    interval = high - low
+    gt_observation_space = gym.spaces.Box(
+        np.float32(midpoint - interval / 2),
+        np.float32(midpoint + interval / 2),
+    )
+
+    image_size = config.size[0]
+    if config.multimodal:
+        if config.aug_rssm:
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+            )
+        else:
+            image_observation_space = gym.spaces.Box(
+                low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
+            )
+    else:
+        image_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+        )
+
+    if config.obs_priv_heat:
+        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(9,), dtype=np.float32)
+    else:
+        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(8,), dtype=np.float32)
+
+    if config.aug_rssm:
+        heat_observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
+        )
+        observation_space = gym.spaces.Dict({
+            'state': gt_observation_space,
+            'obs_state': obs_observation_space,
+            'image': image_observation_space,
+            'heat': heat_observation_space,
+        })
+    else:
+        observation_space = gym.spaces.Dict({
+            'state': gt_observation_space,
+            'obs_state': obs_observation_space,
+            'image': image_observation_space,
+        })
+
+    config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
+
+    # ------------- Load dataset -------------
+    expert_val_eps = collections.OrderedDict()
+    tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
+    eval_dataset = make_dataset(expert_val_eps, config)
+
+    # print("Length of training data:", len(expert_eps))
+    print("Length of validation data:", len(expert_val_eps))
+
+    # ------------- Build agent (no training) -------------
+    agent = Dreamer(
+        observation_space,
+        action_space,
+        config,
+        logger,
+        dataset=None,
+    ).to(config.device)
+    agent.requires_grad_(requires_grad=False)
+    agent.eval()
+
+    # ------------- Load checkpoint -------------
+    if ckpt_path is None:
+        ckpt_path = config.rssm_ckpt_path
+        ckpt_path = "/data/mattkiim/runs/merged_5hz_fast_avg_gp/latest.pt"
+    ckpt_path = pathlib.Path(ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    print(f"Loading checkpoint: {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, weights_only=False, map_location=config.device)
+    agent.load_state_dict(checkpoint["agent_state_dict"], strict=True)
+
+    agent.eval(); agent._wm.eval(); agent._task_behavior.eval()
+    config.eval_disable_aug = True
+
+
+    recon_mean, total_mean = agent.evaluate_full_metrics(
+        eval_dataset, batches=getattr(config, "eval_batches", 10), prefix="loaded"
+    )
+    print(f"Initial eval after load — recon_mean: {recon_mean:.4f}, total_mean: {total_mean:.4f}")
+    quit()
+
+    # Optims are irrelevant for eval
+
+    # ------------- Optional: video predictions on eval set -------------
+    # if config.video_pred_log:
+    #     try:
+    #         if config.multimodal:
+    #             video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
+    #             logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
+    #             logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
+    #         else:
+    #             video_pred = agent._wm.video_pred(next(eval_dataset))
+    #             logger.video("eval_recon/openl_agent", to_np(video_pred))
+    #         logger.write(step=logger.step)
+    #     except Exception as e:
+    #         print("[Warning] video_pred failed:", e)
+
+    # ------------- Eval: probe MLP & full metrics -------------
+    def log_plot(title, data):
+        buf = BytesIO()
+        plt.plot(np.arange(len(data)), data)
+        plt.title(title)
+        plt.savefig(buf, format="png")
+        plt.close()
+        buf.seek(0)
+        plot = Image.open(buf).convert("RGB")
+        plot_arr = np.array(plot)
+        logger.image("eval/" + title, np.transpose(plot_arr, (2, 0, 1)))
+
+    def eval_obs_recon():
+        recon_steps = 101
+        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 8)
+        train_loss, eval_loss = [], []
+        for i in range(recon_steps):
+            if i % int(recon_steps / 4) == 0:
+                new_loss = agent.pretrain_regress_obs(next(eval_dataset), obs_mlp, obs_opt, eval=True)
+                eval_loss.append(new_loss)
+            else:
+                new_loss = agent.pretrain_regress_obs(next(expert_dataset), obs_mlp, obs_opt)
+                train_loss.append(new_loss)
+        log_plot("train_recon_loss", train_loss)
+        log_plot("eval_recon_loss", eval_loss)
+        logger.scalar("eval/train_recon_loss_min", float(np.min(train_loss)))
+        logger.scalar("eval/eval_recon_loss_min", float(np.min(eval_loss)))
+        logger.write(step=logger.step)
+        del obs_mlp, obs_opt
+        return float(np.min(eval_loss))
+
+    # Run both eval passes
+    print("Running evaluation ...")
+    # probe_mse = eval_obs_recon()
+    # batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
+    # recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
+    
+    # # ------------- Eval: OL and CL rollouts -------------
+    # # ---- Hybrid 16-step eval (5 warm + 11 imagine) ----
+    # batch_eval = next(eval_dataset)  # needs T >= 17 inside the batch
+
+    # # Open-loop (uses dataset actions for imagined steps)
+    # res_open = agent.rollout_16_warm5(batch_eval, mode="open")
+
+    # # Closed-loop (actor picks actions for imagined steps)
+    # res_close = agent.rollout_16_warm5(batch_eval, mode="closed", actor_mode=True)
+
+    # # Log scalars
+    # for k, v in res_open["mse_all"].items():
+    #     logger.scalar(f"hybrid16_open/mse_all_{k}", float(v))
+    # for k, v in res_open["mse_imag"].items():
+    #     logger.scalar(f"hybrid16_open/mse_imag_{k}", float(v))
+    # logger.scalar("hybrid16_open/margin_mean_imag", float(res_open["margin_mean_imag"]))
+    # logger.scalar("hybrid16_open/frac_unsafe_imag", float(res_open["frac_unsafe_imag"]))
+
+    # for k, v in res_close["mse_all"].items():
+    #     logger.scalar(f"hybrid16_closed/mse_all_{k}", float(v))
+    # for k, v in res_close["mse_imag"].items():
+    #     logger.scalar(f"hybrid16_closed/mse_imag_{k}", float(v))
+    # logger.scalar("hybrid16_closed/margin_mean_imag", float(res_close["margin_mean_imag"]))
+    # logger.scalar("hybrid16_closed/frac_unsafe_imag", float(res_close["frac_unsafe_imag"]))
+    
+    # # Also print a short console summary
+    # print("Hybrid16 (open):", res_open)
+    # print("Hybrid16 (closed):", res_close)
+    
+    # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
+    n_windows = 50  # number of windows you want to evaluate
+    shared_batches = [next(eval_dataset) for _ in range(n_windows)]
+
+    # Open-loop on shared samples
+    open_stats  = agent.eval_confusion_from_batches(
+        shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
+    )
+    # Closed-loop on the exact same samples
+    closed_stats = agent.eval_confusion_from_batches(
+        shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
+    )
+
+    print("\n=== Confusion (Open, same samples) ===")
+    for k, v in open_stats.items():
+        print(f"{k}: {v}")
+
+    print("\n=== Confusion (Closed, same samples) ===")
+    for k, v in closed_stats.items():
+        print(f"{k}: {v}")
+    
+    
+    # print("\n==== EVAL SUMMARY ====")
+    # print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
+    # print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
+    # print(f"Held-out total_loss mean:  {total_mean:.6f}")
+    # print("=======================\n")
+    
+    quit()
+    
+    logger.write(step=logger.step)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", default="configs.yaml", type=str)
@@ -815,4 +1058,4 @@ if __name__ == "__main__":
     for key, value in sorted(defaults.items(), key=lambda x: x[0]):
         arg_type = tools.args_type(value)
         parser.add_argument(f"--{key}", type=arg_type, default=arg_type(value))
-    main(parser.parse_args(remaining))
+    main1(parser.parse_args(remaining))

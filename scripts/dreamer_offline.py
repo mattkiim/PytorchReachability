@@ -138,7 +138,6 @@ class Dreamer(nn.Module):
             self._wm.dynamics.get_feat(s)
         ).mode()
         metrics.update(self._task_behavior._train(start, reward)[-1])
-        quit()
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -660,6 +659,23 @@ def main(config):
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_val_eps, config)
 
+    def inspect_dataset(dataset, n_eps=2):
+        for k, traj in list(dataset.items())[:n_eps]:
+            obs = traj
+            print(f"\nTrajectory: {k}")
+            
+            if 'image' in obs:
+                arr = np.array(obs['image'])
+                print("  image:", arr.dtype, arr.min(), arr.max())
+            if 'heat' in obs:
+                arr = np.array(obs['heat'])
+                print("  heat:", arr.dtype, arr.min(), arr.max())
+            if 'state' in obs:
+                arr = np.array(obs['state'])
+                print("  state:", arr.dtype, arr.min(), arr.max())
+    inspect_dataset(expert_val_eps, n_eps=3)
+    
+
     print("Length of training data:", len(expert_eps)) # 32
     print("Length of validation data:", len(expert_val_eps)) # 10
 
@@ -678,7 +694,7 @@ def main(config):
     if (logdir / "latest.pt").exists():
         print("Loading from checkpoint...")
         checkpoint = torch.load(logdir / "latest.pt", weights_only=False)
-        agent.load_state_dict(checkpoint["agent_state_dict"])
+        agent.load_state_dict(checkpoint["agent_state_dict"], strict=True)
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
         
         agent._should_pretrain._once = False

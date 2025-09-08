@@ -46,7 +46,7 @@ class Franka_WM_Env(gym.Env):
     def step(self, action):
 
         init = {k: v[:, -1] for k, v in self.latent.items()}
-        ac_torch = torch.tensor([[action]], dtype=torch.float32).to(self.device)#*self.scalar
+        ac_torch = torch.tensor([[action]], dtype=torch.float32).to(self.device) * self.scalar
         
         rew = np.inf
         for i in range(self.N):
