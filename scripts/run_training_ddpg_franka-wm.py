@@ -69,6 +69,8 @@ def get_args():
         assert config.expt_name, "Need to provide experiment name to resume run."
 
     yml = yaml.YAML(typ="safe", pure=True)
+    print('cofnig path: ', config.config_path)
+    config.config_path = 'configs/configs_hw_merged_5hz_fast_avg_masked.yaml' # for franka-wm
     configs = yml.load(
         (pathlib.Path(sys.argv[0]).parent / f"../{config.config_path}").read_text()
     )
@@ -133,6 +135,8 @@ action_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
 config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
 wm = models.WorldModel(observation_space, action_space, 0, config)
+print(dir(wm.encoder))
+print(wm.encoder.heat_cnn_shapes)
 
 ckpt_path = config.rssm_ckpt_path
 checkpoint = torch.load(ckpt_path, weights_only=True)

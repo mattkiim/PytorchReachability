@@ -690,7 +690,11 @@ def main(config):
         
     step = logger.step
     agent.requires_grad_(requires_grad=False)
-    
+
+    if config.mask: 
+        assert agent._wm.encoder.heat_cnn_shapes is None 
+        assert agent._wm.heads["decoder"].heat_cnn_shapes is not None
+
     if (logdir / "latest.pt").exists():
         print("Loading from checkpoint...")
         checkpoint = torch.load(logdir / "latest.pt", weights_only=False)

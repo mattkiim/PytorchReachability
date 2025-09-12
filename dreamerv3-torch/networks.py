@@ -330,7 +330,11 @@ class MultiEncoder(nn.Module):
             for k, v in shapes.items()
             if len(v) in (1, 2) and re.match(mlp_keys, k)
         }
-        if multimodal and aug_rssm:
+
+        #import ipdb; ipdb.set_trace()
+        if heat_keys is None:
+            self.heat_cnn_shapes = None
+        elif multimodal and aug_rssm:
             self.heat_cnn_shapes = {
                 k: v for k, v in shapes.items() if len(v) == 3 and re.match(heat_keys, k)
             }
