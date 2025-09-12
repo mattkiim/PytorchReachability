@@ -359,17 +359,112 @@ def save_composite_video(
     imageio.mimsave(filename, frames_out, fps=fps)
     print(f"Saved composite video: {filename}")
 
+def collect_policy_timeseries_open_loop(
+    wm, policy,
+    cam0, cam2, heat_inner, arm_states, grip_states, actions,
+    device, use_heat: bool,
+    warm: int = 5,
+    precision16: bool = False,
+):
+    import numpy as np
+    import torch
+    from torchvision import transforms
+
+    T = heat_inner.shape[0]
+    use_amp = precision16
+
+    resize_transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor()
+    ])
+
+    Lw = min(warm, T)
+    rs_list, heat1_list, state_list, act_list = [], [], [], []
+    for t in range(Lw):
+        rs_img = (cam0[t] * 255).astype(np.uint8)
+        rs_list.append(resize_transform(rs_img).to(device))
+
+        heat_img = (cam2[t] * 255).astype(np.uint8)
+        h = resize_transform(heat_img).to(device)
+        heat1_list.append(h)
+
+        ee = eef_pose_to_state(np.array(arm_states[t]).reshape(4,4).T, np.array(grip_states[t]))
+        state_list.append(torch.tensor(ee, device=device, dtype=torch.float32))
+
+        norm_ac = normalize_acs(torch.tensor([actions[t]], device=device), device=device)
+        act_list.append(norm_ac.squeeze(0))
+
+    assert Lw > 0, "Need at least one warm step"
+
+    rs_seq   = torch.stack(rs_list,   dim=0).unsqueeze(0).float().permute(0,1,3,4,2)
+    heat_seq = torch.stack(heat1_list,dim=0).unsqueeze(0).float().permute(0,1,3,4,2)
+    states_seq = torch.stack(state_list, dim=0).unsqueeze(0).float()
+    acs_seq    = torch.stack(act_list,  dim=0).unsqueeze(0).float()
+
+    is_first = torch.zeros((1, Lw, 1), dtype=torch.float32, device=device)
+    is_term  = torch.zeros((1, Lw, 1), dtype=torch.float32, device=device)
+    is_first[:, 0] = 1.0
+
+    obs_batch = {
+        "obs_state":   states_seq,
+        "image":       rs_seq,
+        "heat":        heat_seq if use_heat else torch.zeros_like(heat_seq),
+        "action":      acs_seq,
+        "is_first":    is_first,
+        "is_terminal": is_term,
+    }
+    A = 7
+    lz = np.full((T,), np.nan, dtype=np.float32)
+    Vz = np.full((T,), np.nan, dtype=np.float32)
+    acts_env = np.full((T, A), np.nan, dtype=np.float32)
+
+    # closed loop
+    data = wm.preprocess(obs_batch)
+    
+    embed = wm.encoder(data)
+    post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
+    feat_warm = wm.dynamics.get_feat(post)
+
+    # closed l(z)
+    margin_warm = wm.heads["margin"](feat_warm).squeeze(0).squeeze(-1)
+    lz[:Lw] = np.tanh(0.1 * margin_warm.detach().cpu().numpy()).astype(np.float32)
+
+    # closed V(z)
+    feats_np_warm = feat_warm.squeeze(0).detach().cpu().numpy()
+    V_list_warm = [float(evaluate_V(policy, feats_np_warm[k])[0]) for k in range(feats_np_warm.shape[0])]
+    Vz[:Lw] = np.asarray(V_list_warm, dtype=np.float32)
+
+    # # open loop
+    if T > Lw:
+        ds_actions_norm = normalize_acs(torch.tensor(actions[Lw:T], device=device), device=device)
+        a_seq = ds_actions_norm.unsqueeze(0).float()
+        curr_boundary = {k: v[:, Lw-1] for k, v in post.items()}
+
+        prior_tail = wm.dynamics.imagine_with_action(a_seq, curr_boundary)
+        imag_feat  = wm.dynamics.get_feat(prior_tail) 
+
+        # l(z)
+        margins_tail = wm.heads["margin"](imag_feat).squeeze(0).squeeze(-1)
+        lz[Lw:T] = np.tanh(0.1 * margins_tail.detach().cpu().numpy()).astype(np.float32)
+
+        # V(z)
+        feats_np_tail = imag_feat.squeeze(0).detach().cpu().numpy()
+        V_list_tail = [float(evaluate_V(policy, feats_np_tail[k])[0]) for k in range(feats_np_tail.shape[0])]
+        Vz[Lw:T] = np.asarray(V_list_tail, dtype=np.float32)
+
+        acts_env[Lw:T] = np.asarray(actions[Lw:T], dtype=np.float32)
+    else:
+        print("T cannot be < Lw"); quit()
+
+    return {"lz": lz, "Vz": Vz, "actions": acts_env}
+
 
 def collect_policy_timeseries(
     wm, policy, cam0, cam2, heat_inner, arm_states, grip_states, actions,
     device, use_heat: bool, seq_len: int = 3, safe_scale: float = SAFE_SCALE,
     precision16: bool = False,
 ):
-    """
-    Returns: dict(lz, Vz, actions)
-    - lz, Vz: shape (T,)
-    - actions: shape (T, A) — the policy's proposed actions in ORIGINAL scale (after unnormalize)
-    """
     T = heat_inner.shape[0]
     use_amp = precision16
 
@@ -389,24 +484,13 @@ def collect_policy_timeseries(
         grip    = torch.tensor(grip_states[t])
         act_env = actions[t]  # original env scale in dataset
 
-        # normalize dataset action to [-1, 1]
         norm_ac = normalize_acs(torch.tensor([act_env]).to(device), device=device)
-
-        # 4x4 pose -> [x y z qx qy qz qw grip]
         ee_state = eef_pose_to_state(np.array(arm).reshape(4, 4).T, np.array(grip))
 
-        # RGB
-        rs_t = resize_transform(img_rs).to(device)  # CHW
+        rs_t = resize_transform(img_rs).to(device)
 
-        # IR/heat handling:
-        if use_heat:
-            # cam2 is IR; ensure 1ch then expand to 3ch for encoder if needed
-            img_flr_1 = img_flr[..., :1] if img_flr.ndim == 3 else img_flr
-            flir_t = resize_transform(img_flr_1.squeeze()).to(device)      # 1xHxW
-            flir_t = torch.stack([flir_t.squeeze(0)]*3, dim=0)             # 3xHxW
-        else:
-            # dummy 3ch zeros (keeps shapes consistent)
-            flir_t = torch.zeros_like(rs_t, device=device)
+        img_flr_1 = torch.stack([torch.tensor(img_flr).squeeze()]*3, dim=0) if img_flr.shape[-1] == 1 else img_flr
+        flir_t = resize_transform(img_flr_1.squeeze()).to(device)
 
         # rolling window
         if len(rs_hist) == seq_len:   rs_hist.pop(0)
@@ -419,11 +503,11 @@ def collect_policy_timeseries(
         state_hist.append(torch.tensor(ee_state, device=device, dtype=torch.float32))
         action_hist.append(torch.tensor(norm_ac, device=device, dtype=torch.float32).squeeze())
 
-        # (B=1, L, C, H, W) -> (B, L, H, W, C) for your wm
         rs_seq   = torch.stack(rs_hist,   dim=0).unsqueeze(0).float().permute(0,1,3,4,2)
         flir_seq = torch.stack(flir_hist, dim=0).unsqueeze(0).float().permute(0,1,3,4,2)
-        flir_1ch = flir_seq[..., :1]  # your WM expects 1-channel heat in dict
-
+        
+        flir_1ch = flir_seq[..., :1]
+        
         states_seq = torch.stack(state_hist, dim=0).unsqueeze(0).float()
         acs_seq    = torch.stack(action_hist, dim=0).unsqueeze(0).float()
 
@@ -443,12 +527,12 @@ def collect_policy_timeseries(
 
         data = wm.preprocess(obs_batch)
 
-        with torch.cuda.amp.autocast(use_amp):
-            embed = wm.encoder(data)
-            post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
-            feat  = wm.dynamics.get_feat(post)
+        embed = wm.encoder(data)
+        post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+        feat  = wm.dynamics.get_feat(post)
 
         last_feat = feat[:, -1]
+        # print(last_feat.shape); quit()
         margin = wm.heads["margin"](last_feat).item()
         lz_list.append(np.tanh(0.1 * margin))
 
@@ -456,7 +540,6 @@ def collect_policy_timeseries(
         V_val = evaluate_V(policy, z_np)[0]
         V_list.append(V_val)
 
-        # actor in normalized space -> optional safety shrink -> unnormalize back
         tmp_batch = Batch(obs=z_np.reshape(1, -1), info=Batch())
         with torch.no_grad():
             a_norm = policy(tmp_batch, model="actor_old").act
@@ -492,20 +575,22 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     policy_mm   = build_policy_for_value(cfg_mm)
 
     path = cfg.dataset_path
-    vid_path = f"traj_videos/{cfg.dataset_name}"
+    vid_path = f"traj_videos/test"
     video_dir = pathlib.Path(vid_path); video_dir.mkdir(parents=True, exist_ok=True)
 
     device = next(wm_rgb.parameters()).device
     use_amp = True if getattr(cfg, "precision", 32) == 16 else False
 
     with h5py.File(path, "r") as f:
+        s = 222
+        e = s + 21
         for i, run in enumerate(f, start=1):
-            cam0        = f[run]["camera_0"][:]
-            cam2        = f[run]["camera_2"][:]
-            heat_inner  = np.squeeze(f[run]["hot_inner"][:], -1)
-            arm_states  = torch.tensor(f[run]['ee_states'][:])
-            grip_states = torch.tensor(f[run]['gripper_states'][:])
-            actions_ds  = f[run]["actions"][:]
+            cam0        = f[run]["camera_0"][s:e]
+            cam2        = f[run]["camera_2"][s:e]
+            heat_inner  = np.squeeze(f[run]["hot_inner"][s:e], -1)
+            arm_states  = torch.tensor(f[run]['ee_states'][s:e])
+            grip_states = torch.tensor(f[run]['gripper_states'][s:e])
+            actions_ds  = f[run]["actions"][s:e]
             T           = heat_inner.shape[0]
 
             if i != 27: continue
@@ -525,7 +610,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
                     failure.append(heat_avg > 0.1)
             failure = np.asarray(failure, dtype=np.float32)
 
-            # --- Roll out both policies
+            # --- Roll out both policies (open-loop with dataset actions)
             rgb_ts = collect_policy_timeseries(
                 wm_rgb, policy_rgb, cam0, cam2, heat_inner, arm_states, grip_states, actions_ds,
                 device=device, use_heat=False, seq_len=5, safe_scale=SAFE_SCALE, precision16=use_amp
@@ -533,6 +618,38 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
             mm_ts = collect_policy_timeseries(
                 wm_mm, policy_mm, cam0, cam2, heat_inner, arm_states, grip_states, actions_ds,
                 device=device, use_heat=True, seq_len=5, safe_scale=SAFE_SCALE, precision16=use_amp
+            )
+            
+            # --- Package for plotting: two policies on shared axes
+            policies_metrics = {
+                "rgb_only":   {"lz": rgb_ts["lz"], "Vz": rgb_ts["Vz"]},
+                "multimodal": {"lz": mm_ts["lz"],  "Vz": mm_ts["Vz"]},
+            }
+            actions_dict = {
+                "rgb_only":   rgb_ts["actions"],   # (T, 7)
+                "multimodal": mm_ts["actions"],    # (T, 7)
+            }
+
+            out_path = video_dir / f"traj_{i}.mp4"
+            save_composite_video(
+                cam0, cam2, heat_inner, failure, arm_states,
+                filename=out_path, fps=20,
+                policies_metrics=policies_metrics,
+                actions_dict=actions_dict,
+                action_index=2,  # plot z for both policies on one plot
+            )
+            print(f"[{run}] wrote {out_path}")
+
+            
+            rgb_ts = collect_policy_timeseries_open_loop(
+                wm_rgb, policy_rgb,
+                cam0, cam2, heat_inner, arm_states, grip_states, actions_ds,
+                device=device, use_heat=False, warm=5, precision16=use_amp
+            )
+            mm_ts = collect_policy_timeseries_open_loop(
+                wm_mm, policy_mm,
+                cam0, cam2, heat_inner, arm_states, grip_states, actions_ds,
+                device=device, use_heat=True, warm=5, precision16=use_amp
             )
 
             # --- Package for plotting: two policies on shared axes
@@ -545,7 +662,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
                 "multimodal": mm_ts["actions"],    # (T, 7)
             }
 
-            out_path = video_dir / f"traj_{i}.mp4"
+            out_path = video_dir / f"traj_{i}_ol.mp4"
             save_composite_video(
                 cam0, cam2, heat_inner, failure, arm_states,
                 filename=out_path, fps=20,

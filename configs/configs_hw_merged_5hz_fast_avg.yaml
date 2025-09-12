@@ -15,20 +15,35 @@ defaults:
 
   # offline data parameters
   data_length: 100
+
+  # ## TRAINING
   # num_trajs: 160 ## 4000 in paper
   # num_train_trajs: 140 ## 3800 in paper
+  # dataset_path: '/data/mattkiim/merged_5hz.h5'
 
-  num_trajs: 2 ## 4000 in paper
-  num_train_trajs: 1 ## 3800 in paper
+  ## TEST
+  # num_trajs: 2 ## 4000 in paper
+  # num_train_trajs: 1 ## 3800 in paper
+  # dataset_path: '/data/mattkiim/hw_test.h5'
 
+  ## INFO THEORY
+  num_trajs: 40 ## 4000 in paper
+  num_train_trajs: 0 ## 3800 in paper
+  dataset_path: '/data/mattkiim/info_theory_hw_dataset.h5'
+
+  # num_trajs: 18 ## 4000 in paper
+  # num_train_trajs: 0 ## 3800 in paper
+  # dataset_path: '/data/mattkiim/merged_eval_5hz.h5'
+
+  # num_trajs: 22 ## 4000 in paper
+  # num_train_trajs: 0 ## 3800 in paper
+  # dataset_path: '/data/mattkiim/calibration_5hz.h5'
 
   size: [224, 224]
 
   avg: True
   rgb_only: False
 
-  dataset_path: '/data/mattkiim/hw_test.h5'
-  # dataset_path: '/data/mattkiim/merged_5hz.h5'
   logdir: '/data/mattkiim/runs/merged_5hz_fast_avg'
   rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg/rssm_ckpt.pt'
 
@@ -50,7 +65,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:1'
+  device: 'cuda:0'
   compile: True
   precision: 32
   debug: False

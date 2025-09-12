@@ -2,6 +2,7 @@
 import argparse
 import functools
 import os
+os.environ["WANDB_MODE"] = "disabled"
 import pathlib
 import sys
 import pickle
@@ -174,7 +175,7 @@ class Dreamer(nn.Module):
         Returns per-head MSEs (all 16 and imag-only) and margin stats. NO videos.
         """
         assert mode in ("open", "closed")
-        H, WARM = 16, 5
+        H, WARM = 21, 5
         FUT = H - WARM
 
         wm = self._wm
@@ -264,7 +265,7 @@ class Dreamer(nn.Module):
         Positive class = 'unsafe' (failure == 1). Prediction = (margin < gamma_lx).
         Returns: dict(TP=..., TN=..., FP=..., FN=..., total=...)
         """
-        H, WARM = 16, 5
+        H, WARM = 21, 5
         FUT = H - WARM
 
         wm = self._wm
@@ -294,7 +295,7 @@ class Dreamer(nn.Module):
         # Predicted (unsafe=1) if margin < gamma
         margin = self._wm.heads["margin"](imag_feat)
         margin = margin.squeeze(-1) if margin.dim() == 3 else margin
-        pred_unsafe = (margin < cfg.gamma_lx)
+        pred_unsafe = (margin < 0)
 
         # Ground-truth (unsafe=1)
         gt = data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
@@ -446,6 +447,50 @@ class Dreamer(nn.Module):
             out[f"recon/{name}"] = to_np(l)
         return out
 
+    @torch.no_grad()
+    def latent_state_test_sliding_fixed(self, dataset_iter, warm: int = 5):
+        wm = self._wm
+        agg = dict(TP=0, TN=0, FP=0, FN=0, N=0)
+
+        while True:
+            try:
+                batch = next(dataset_iter)  # dict of arrays, already batched
+            except StopIteration:
+                break
+
+            data = wm.preprocess(batch)  # [B, T, ...]
+            B, T = data["action"].shape[:2]
+            if T < warm + 1:
+                continue  # skip short windows
+
+            embed = wm.encoder(data)
+            post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
+            feats = wm.dynamics.get_feat(post)  # [B, T, F]
+
+            idx = warm-1
+            z = feats[:, idx]  # [B, F]
+            margin = wm.heads["margin"](z).squeeze(-1)  # [B]
+            pred_unsafe = (margin < 0).long()
+
+            y = data["failure"][:, idx].long()  # label at same time index
+
+            agg["TP"] += int(((pred_unsafe == 0) & (y == 0)).sum().item())
+            agg["TN"] += int(((pred_unsafe == 1) & (y == 1)).sum().item())
+            agg["FP"] += int(((pred_unsafe == 0) & (y == 1)).sum().item())
+            agg["FN"] += int(((pred_unsafe == 1) & (y == 0)).sum().item())
+            agg["N"]  += int(y.numel())
+
+        acc = (agg["TP"] + agg["TN"]) / max(1, agg["N"])
+        
+        agg["acc"] = acc
+        agg["tpr"] = agg["TP"] / agg["N"]
+        agg["tnr"] = agg["TN"] / agg["N"]
+        agg["fpr"] = agg["FP"] / agg["N"]
+        agg["fnr"] = agg["FN"] / agg["N"]
+        
+        return agg
+
+
 
 
 def count_steps(folder):
@@ -453,9 +498,74 @@ def count_steps(folder):
 
 
 def make_dataset(episodes, config):
-    generator = tools.sample_episodes(episodes, config.batch_length)
+    generator = tools.sample_episodes(episodes, config.batch_length + 6)
     dataset = tools.from_generator(generator, config.batch_size)
     return dataset
+
+def make_sliding_eval_dataset(episodes, window_len, stride, batch_size):
+    """
+    Deterministic eval iterator:
+    - No shuffling
+    - For each trajectory, produce windows [start : start+window_len) with 'stride'
+    - Yields dicts already batched to 'batch_size' (last batch may be smaller)
+    """
+    # Preserve episode order
+    trajs = list(episodes.values())
+
+    def gen():
+        batch = []
+        for ep in trajs:
+            T = len(ep["action"])
+            # Start indices: 0, stride, 2*stride, ... with last start <= T - window_len
+            for start in range(0, max(T - window_len + 1, 0), stride):
+                window = {k: v[start:start + window_len] for k, v in ep.items()}
+                batch.append(window)
+                if len(batch) == batch_size:
+                    yield _stack_batch(batch)
+                    batch = []
+        if batch:
+            yield _stack_batch(batch)
+
+    def _stack_batch(batch_list):
+        keys = batch_list[0].keys()
+        out = {k: np.stack([b[k] for b in batch_list], axis=0) for k in keys}
+        return out
+
+    # Return a Python iterator that matches how you use next(eval_dataset)
+    return gen()
+
+@torch.no_grad()
+def eval_confusion_stream_all(agent, dataset_iter, mode="open", actor_mode=True, log_prefix=None):
+    """
+    Consume the eval iterator to exhaustion and aggregate TP/TN/FP/FN across ALL batches.
+    Uses Dreamer.confusion_16_warm5 under the hood.
+    """
+    agg = dict(TP=0, TN=0, FP=0, FN=0, total=0)
+    while True:
+        try:
+            batch = next(dataset_iter)
+        except StopIteration:
+            break
+        res = agent.confusion_16_warm5(batch, mode=mode, actor_mode=actor_mode)
+        for k in agg:
+            agg[k] += res[k]
+
+    N = max(1, agg["total"])
+    out = {
+        **agg,
+        "tpr": agg["TP"] / N,
+        "tnr": agg["TN"] / N,
+        "fpr": agg["FP"] / N,
+        "fnr": agg["FN"] / N,
+    }
+
+    if agent._logger is not None and log_prefix:
+        for k, v in out.items():
+            agent._logger.scalar(f"{log_prefix}/{k}", float(v))
+        agent._logger.write(step=agent._logger.step)
+
+    return out
+
 
 
 def main(config, ckpt_path=None, eval_batches=None):
@@ -498,51 +608,54 @@ def main(config, ckpt_path=None, eval_batches=None):
     )
 
     image_size = config.size[0]
-    if config.multimodal:
-        if config.aug_rssm:
-            image_observation_space = gym.spaces.Box(
-                low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
-            )
-        else:
-            image_observation_space = gym.spaces.Box(
-                low=0, high=255, shape=(image_size, image_size, 4), dtype=np.uint8
-            )
-    else:
-        image_observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(image_size, image_size, 3), dtype=np.uint8
+    cam_obs_space = gym.spaces.Box(
+        low=0, high=1, shape=(image_size, image_size, 3), dtype=np.float32
+    )
+    policy_obs_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32
         )
+    bool_space = gym.spaces.Box(low=np.array([0]), high=np.array([1]), dtype=np.float32)
 
-    if config.obs_priv_heat:
-        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(9,), dtype=np.float32)
-    else:
-        obs_observation_space = gym.spaces.Box(low=-1, high=1, shape=(8,), dtype=np.float32)
+    obs_observation_space = gym.spaces.Box(
+        low=-1, high=1, shape=(8,), dtype=np.float32
+    )
 
-    if config.aug_rssm:
-        heat_observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(image_size, image_size, 1), dtype=np.uint8
-        )
-        observation_space = gym.spaces.Dict({
-            'state': gt_observation_space,
+    heat_observation_space = gym.spaces.Box(
+        low=0, high=1, shape=(image_size, image_size, 1), dtype=np.float32
+    )
+
+    observation_space = gym.spaces.Dict({
             'obs_state': obs_observation_space,
-            'image': image_observation_space,
+            'image': cam_obs_space,
             'heat': heat_observation_space,
-        })
-    else:
-        observation_space = gym.spaces.Dict({
-            'state': gt_observation_space,
-            'obs_state': obs_observation_space,
-            'image': image_observation_space,
+            'is_first': bool_space,
+            'is_last': bool_space,
+            'is_terminal': bool_space,
+            'policy': policy_obs_space,
+            # 'wrist_cam': cam_obs_space,
         })
 
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
     # ------------- Load dataset -------------
+    # expert_val_eps = collections.OrderedDict()
+    # tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
+    # eval_dataset = make_dataset(expert_val_eps, config)
+    # print("Length of validation data:", len(expert_val_eps))
+    
     expert_val_eps = collections.OrderedDict()
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
-    eval_dataset = make_dataset(expert_val_eps, config)
+    print("Length of validation data (episodes):", len(expert_val_eps))
 
-    # print("Length of training data:", len(expert_eps))
-    print("Length of validation data:", len(expert_val_eps))
+    # Deterministic, sliding-window eval dataset:
+    window_len = 21
+    stride = 10
+    eval_dataset = make_sliding_eval_dataset(
+        expert_val_eps,
+        window_len=window_len,
+        stride=stride,
+        batch_size=config.batch_size,
+)
 
     # ------------- Build agent (no training) -------------
     agent = Dreamer(
@@ -558,7 +671,7 @@ def main(config, ckpt_path=None, eval_batches=None):
     # ------------- Load checkpoint -------------
     if ckpt_path is None:
         ckpt_path = config.rssm_ckpt_path
-        ckpt_path = "/data/mattkiim/runs/merged_5hz_fast_avg_gp/latest.pt"
+        # ckpt_path = "/data/mattkiim/runs/merged_5hz_fast_avg_gp/latest.pt"
     ckpt_path = pathlib.Path(ckpt_path)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -571,121 +684,50 @@ def main(config, ckpt_path=None, eval_batches=None):
     config.eval_disable_aug = True
 
 
-    recon_mean, total_mean = agent.evaluate_full_metrics(
-        eval_dataset, batches=getattr(config, "eval_batches", 10), prefix="loaded"
-    )
-    print(f"Initial eval after load — recon_mean: {recon_mean:.4f}, total_mean: {total_mean:.4f}")
-    quit()
-
-    # Optims are irrelevant for eval
-
-    # ------------- Optional: video predictions on eval set -------------
-    # if config.video_pred_log:
-    #     try:
-    #         if config.multimodal:
-    #             video_pred_rgb, video_pred_heat = agent._wm.video_pred_multimodal(next(eval_dataset))
-    #             logger.video("eval_recon/openl_agent", to_np(video_pred_rgb))
-    #             logger.video("eval_recon_heat/openl_agent", to_np(video_pred_heat))
-    #         else:
-    #             video_pred = agent._wm.video_pred(next(eval_dataset))
-    #             logger.video("eval_recon/openl_agent", to_np(video_pred))
-    #         logger.write(step=logger.step)
-    #     except Exception as e:
-    #         print("[Warning] video_pred failed:", e)
-
-    # ------------- Eval: probe MLP & full metrics -------------
-    def log_plot(title, data):
-        buf = BytesIO()
-        plt.plot(np.arange(len(data)), data)
-        plt.title(title)
-        plt.savefig(buf, format="png")
-        plt.close()
-        buf.seek(0)
-        plot = Image.open(buf).convert("RGB")
-        plot_arr = np.array(plot)
-        logger.image("eval/" + title, np.transpose(plot_arr, (2, 0, 1)))
-
-    def eval_obs_recon():
-        recon_steps = 101
-        obs_mlp, obs_opt = agent._wm._init_obs_mlp(config, 8)
-        train_loss, eval_loss = [], []
-        for i in range(recon_steps):
-            if i % int(recon_steps / 4) == 0:
-                new_loss = agent.pretrain_regress_obs(next(eval_dataset), obs_mlp, obs_opt, eval=True)
-                eval_loss.append(new_loss)
-            else:
-                new_loss = agent.pretrain_regress_obs(next(expert_dataset), obs_mlp, obs_opt)
-                train_loss.append(new_loss)
-        log_plot("train_recon_loss", train_loss)
-        log_plot("eval_recon_loss", eval_loss)
-        logger.scalar("eval/train_recon_loss_min", float(np.min(train_loss)))
-        logger.scalar("eval/eval_recon_loss_min", float(np.min(eval_loss)))
-        logger.write(step=logger.step)
-        del obs_mlp, obs_opt
-        return float(np.min(eval_loss))
-
-    # Run both eval passes
-    print("Running evaluation ...")
-    # probe_mse = eval_obs_recon()
-    # batches = eval_batches if eval_batches is not None else getattr(config, "eval_batches", 10)
-    # recon_mean, total_mean = agent.evaluate_full_metrics(eval_dataset, batches=batches, prefix="eval")
-    
-    # # ------------- Eval: OL and CL rollouts -------------
-    # # ---- Hybrid 16-step eval (5 warm + 11 imagine) ----
-    # batch_eval = next(eval_dataset)  # needs T >= 17 inside the batch
-
-    # # Open-loop (uses dataset actions for imagined steps)
-    # res_open = agent.rollout_16_warm5(batch_eval, mode="open")
-
-    # # Closed-loop (actor picks actions for imagined steps)
-    # res_close = agent.rollout_16_warm5(batch_eval, mode="closed", actor_mode=True)
-
-    # # Log scalars
-    # for k, v in res_open["mse_all"].items():
-    #     logger.scalar(f"hybrid16_open/mse_all_{k}", float(v))
-    # for k, v in res_open["mse_imag"].items():
-    #     logger.scalar(f"hybrid16_open/mse_imag_{k}", float(v))
-    # logger.scalar("hybrid16_open/margin_mean_imag", float(res_open["margin_mean_imag"]))
-    # logger.scalar("hybrid16_open/frac_unsafe_imag", float(res_open["frac_unsafe_imag"]))
-
-    # for k, v in res_close["mse_all"].items():
-    #     logger.scalar(f"hybrid16_closed/mse_all_{k}", float(v))
-    # for k, v in res_close["mse_imag"].items():
-    #     logger.scalar(f"hybrid16_closed/mse_imag_{k}", float(v))
-    # logger.scalar("hybrid16_closed/margin_mean_imag", float(res_close["margin_mean_imag"]))
-    # logger.scalar("hybrid16_closed/frac_unsafe_imag", float(res_close["frac_unsafe_imag"]))
-    
-    # # Also print a short console summary
-    # print("Hybrid16 (open):", res_open)
-    # print("Hybrid16 (closed):", res_close)
-    
     # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
-    n_windows = 50  # number of windows you want to evaluate
-    shared_batches = [next(eval_dataset) for _ in range(n_windows)]
+    # n_windows = 50  # number of windows you want to evaluate
+    # shared_batches = [next(eval_dataset) for _ in range(n_windows)]
 
-    # Open-loop on shared samples
-    open_stats  = agent.eval_confusion_from_batches(
-        shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
-    )
-    # Closed-loop on the exact same samples
-    closed_stats = agent.eval_confusion_from_batches(
-        shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
-    )
+    # # Open-loop on shared samples
+    # open_stats  = agent.eval_confusion_from_batches(
+    #     shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
+    # )
+    # # Closed-loop on the exact same samples
+    # closed_stats = agent.eval_confusion_from_batches(
+    #     shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
+    # )
 
-    print("\n=== Confusion (Open, same samples) ===")
-    for k, v in open_stats.items():
-        print(f"{k}: {v}")
+    # print("\n=== Confusion (Open, same samples) ===")
+    # for k, v in open_stats.items():
+    #     print(f"{k}: {v}")
 
-    print("\n=== Confusion (Closed, same samples) ===")
-    for k, v in closed_stats.items():
-        print(f"{k}: {v}")
+    # print("\n=== Confusion (Closed, same samples) ===")
+    # for k, v in closed_stats.items():
+    #     print(f"{k}: {v}")
     
-    
-    # print("\n==== EVAL SUMMARY ====")
-    # print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
-    # print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
-    # print(f"Held-out total_loss mean:  {total_mean:.6f}")
-    # print("=======================\n")
+    # # Open-loop (ALL windows)
+    # eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+    # open_stats = eval_confusion_stream_all(agent, eval_dataset, mode="open", log_prefix="conf_all/open")
+
+    # # Closed-loop (ALL windows) – make a fresh iterator
+    # eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+    # closed_stats = eval_confusion_stream_all(agent, eval_dataset, mode="closed", log_prefix="conf_all/closed")
+
+    # print("\n=== Confusion (Open, ALL) ===")
+    # for k, v in open_stats.items():
+    #     print(f"{k}: {v}")
+
+    # print("\n=== Confusion (Closed, ALL) ===")
+    # for k, v in closed_stats.items():
+    #     print(f"{k}: {v}")
+        
+        
+    eval_dataset = make_sliding_eval_dataset(expert_val_eps, window_len=6, stride=3, batch_size=cfg.batch_size)
+    ls_test = agent.latent_state_test_sliding_fixed(eval_dataset, warm=5)
+    print("\n=== Latent State Test ===")
+    for k, v in ls_test.items():
+        print(f"{k}: {v}")
+        
     
     quit()
     

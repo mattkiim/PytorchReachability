@@ -248,9 +248,9 @@ def load_h5_to_expert_eps(h5_path, max_trajs=None, normalize_actions=True, eps=1
                     'priv_heat': traj_group['labels'][:] if 'labels' in traj_group else np.zeros(len(traj_group['camera_0']), dtype=np.float32)
                 }, # NOTE: there is no priv_heat label in the data as of 7/22
                 'actions': actions.astype(np.float32),
-                'dones': np.zeros(len(actions), dtype=bool)  # replace if actual dones exist
+                'dones': np.zeros(len(actions), dtype=bool),  # replace if actual dones exist
+                'key': traj_key,
             }
-            
 
             if 'camera_2' in traj_group:
                 traj['obs']['heat'] = traj_group['camera_2'][:, :, :, :1]
@@ -286,6 +286,9 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
         elif i >= num_train and not is_val_set:
             break
         traj = demo
+        # print(traj["key"])
+        # if traj["key"] != "trajectory_16" and traj["key"] != "trajectory_4" and traj["key"] != "trajectory_5" and traj["key"] != "trajectory_6": continue
+        
         for t in range(len(traj["obs"][pixel_keys[0]])):
             transition = defaultdict(np.array)
             for obs_key in pixel_keys:
@@ -302,7 +305,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             )
             
             heat_inner = traj["heat_inner"][t]
-            if not getattr(config, "avg", False):
+            if not config.avg:
                 # print(123); quit()
                 frame_wax = heat_inner > 0.0
                 frame_wax_pixel_count = np.sum(frame_wax)
