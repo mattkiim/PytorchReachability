@@ -221,7 +221,7 @@ def run_histogram(cfg, deployments):
         }
 
         plt.figure(figsize=(6,4))
-        plt.hist(vals, bins=40, alpha=0.7, color="C0", range=(0., 0.2))
+        plt.hist(vals, bins=40, alpha=0.7, color="C0", range=(-0.1, 0.2))
         plt.xlabel("Avg pixel intensity at first V(z) ≥ 0.3")
         plt.ylabel("Count")
         plt.title(f"Avg Pixel Intensity Histogram {name}")
