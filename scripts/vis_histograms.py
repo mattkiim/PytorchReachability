@@ -176,7 +176,7 @@ def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_stat
         z = feat[:, -1].detach().cpu().numpy().squeeze()
 
         Vz = evaluate_V(policy, z)
-        if Vz <= 0.2:
+        if Vz <= 0.3:
             return heat[t].mean()
 
     return None
@@ -213,6 +213,8 @@ def run_histogram(cfg, deployments):
                     results[name].append(val)
 
         vals = results[name]
+        
+        print(vals)
 
         counts, bin_edges = np.histogram(vals, bins=40, range=(-0.1, 0.2))
         hist_data[name] = {
@@ -226,11 +228,11 @@ def run_histogram(cfg, deployments):
         plt.ylabel("Count")
         plt.title(f"Avg Pixel Intensity Histogram {name}")
         plt.tight_layout()
-        plt.savefig(f"histogram_vz03_{name}.png")
+        plt.savefig(f"eval/histograms/histogram_vz03_{name}.png")
         plt.close()
 
-    with open("histogram_values_rgb_and_mm.csv", "w") as f:
-        json.dump(hist_data, f, indent=2)
+    # with open("eval/histograms/histogram_values_rgb_and_mm.json", "w") as f:
+    #     json.dump(hist_data, f, indent=2)
 
     return hist_data
 
