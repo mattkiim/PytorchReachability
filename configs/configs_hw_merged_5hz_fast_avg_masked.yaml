@@ -15,8 +15,8 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 160 ## 4000 in paper
-  num_train_trajs: 140 ## 3800 in paper
+  # num_trajs: 160 ## 4000 in paper
+  # num_train_trajs: 140 ## 3800 in paper
 
   # num_trajs: 2 ## 4000 in paper
   # num_train_trajs: 1 ## 3800 in paper
@@ -28,13 +28,17 @@ defaults:
   rgb_only: False
   mask: True
 
-  # dataset_path: '/data/mattkiim/hw_test.h5'
-  dataset_path: '/data/mattkiim/merged_5hz.h5'
-  logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_test'
-  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_test/rssm_ckpt.pt'
+  num_trajs: 40
+  num_train_trajs: 0
 
-  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_test/dreamer.pt'
-  eval_policy_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_test/policy.pth'
+  # dataset_path: '/data/mattkiim/hw_test.h5'
+  # dataset_path: '/data/mattkiim/merged_5hz.h5'
+  dataset_path: '/data/mattkiim/info_theory_hw_dataset.h5'
+  logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_masked'
+  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/rssm_ckpt.pt'
+
+  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/dreamer.pt'
+  eval_policy_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/policy.pth'
 
   # logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz'
   # rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz/rssm_ckpt.pt'
