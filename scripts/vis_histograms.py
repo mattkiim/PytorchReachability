@@ -184,9 +184,22 @@ def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_stat
 
 import json
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
 def run_histogram(cfg, deployments):
     results = {name: [] for name in deployments}
     hist_data = {}
+
+    # Try to import scipy for KDE; fall back gracefully if not present
+    try:
+        from scipy.stats import gaussian_kde
+        HAVE_SCIPY = True
+    except Exception:
+        HAVE_SCIPY = False
+
+    os.makedirs("eval/histograms", exist_ok=True)
 
     for name, (rssm_ckpt, policy_ckpt, use_heat) in deployments.items():
         cfg.eval_rssm_ckpt_path = rssm_ckpt
@@ -212,29 +225,82 @@ def run_histogram(cfg, deployments):
                 if val is not None:
                     results[name].append(val)
 
-        vals = results[name]
-        
+        vals = np.asarray(results[name], dtype=float)
         print(vals)
 
-        counts, bin_edges = np.histogram(vals, bins=40, range=(-0.1, 0.2))
-        hist_data[name] = {
-            "counts": counts.tolist(),
-            "bin_edges": bin_edges.tolist()
-        }
+        # Skip empty cases
+        if vals.size == 0:
+            hist_data[name] = {
+                "counts": [],
+                "bin_edges": [],
+                "gaussian_fit": None,
+                "kde": None
+            }
+            continue
 
-        plt.figure(figsize=(6,4))
-        plt.hist(vals, bins=40, alpha=0.7, color="C0", range=(-0.1, 0.2))
+        # Histogram in density mode so PDFs overlay directly
+        bins = 40
+        rng = (-0.1, 0.2)
+        counts, bin_edges = np.histogram(vals, bins=bins, range=rng, density=True)
+
+        # --- Gaussian fit (MLE via sample mean/std) ---
+        mu  = float(np.mean(vals))
+        std = float(np.std(vals, ddof=0))
+        x = np.linspace(rng[0], rng[1], 512)
+        # Handle degenerate std
+        if std > 1e-12:
+            gauss_pdf = (1.0 / (std * np.sqrt(2.0 * np.pi))) * np.exp(-0.5 * ((x - mu) / std) ** 2)
+        else:
+            gauss_pdf = np.zeros_like(x)
+
+        # --- KDE (optional) ---
+        kde_y = None
+        kde_bw = None
+        if HAVE_SCIPY and vals.size >= 2 and np.any(np.diff(vals) != 0):
+            kde = gaussian_kde(vals)
+            kde_y = kde.evaluate(x)
+            kde_bw = float(kde.factor)  # note: relative to data std
+
+        # --- Plot ---
+        plt.figure(figsize=(6, 4))
+        # density=True so bars integrate to 1 over the domain; PDFs overlay correctly
+        plt.hist(vals, bins=bins, range=rng, alpha=0.4, color="C0", edgecolor="white", density=True, label="Histogram")
+
+        # Overlay Gaussian fit
+        if std > 1e-12:
+            plt.plot(x, gauss_pdf, lw=2, label=f"Gaussian fit (μ={mu:.3f}, σ={std:.3f})", color="C1")
+        else:
+            plt.axvline(mu, color="C1", lw=2, label=f"Degenerate Gaussian at μ={mu:.3f}")
+
+        # Overlay KDE if available
+        if kde_y is not None:
+            plt.plot(x, kde_y, lw=2, label="KDE", color="C3")
+
         plt.xlabel("Avg pixel intensity at first V(z) ≥ 0.3")
-        plt.ylabel("Count")
-        plt.title(f"Avg Pixel Intensity Histogram {name}")
+        plt.ylabel("Density")
+        plt.title(f"Avg Pixel Intensity — {name}")
+        plt.legend(frameon=False)
         plt.tight_layout()
-        plt.savefig(f"eval/histograms/histogram_vz03_{name}.png")
+        plt.savefig(f"eval/histograms/histogram_vz03_{name}.png", dpi=200)
         plt.close()
 
-    # with open("eval/histograms/histogram_values_rgb_and_mm.json", "w") as f:
-    #     json.dump(hist_data, f, indent=2)
+        # Keep your original (count-based) histogram too, if you want
+        counts_raw, bin_edges_raw = np.histogram(vals, bins=bins, range=rng, density=False)
+
+        hist_data[name] = {
+            # count-based (as you had before)
+            "counts": counts_raw.tolist(),
+            "bin_edges": bin_edges_raw.tolist(),
+            # density-based (for overlays)
+            "density_counts": counts.tolist(),
+            "density_bin_edges": bin_edges.tolist(),
+            # fits
+            "gaussian_fit": {"mu": mu, "sigma": std},
+            "kde": {"bandwidth_factor": kde_bw} if kde_y is not None else None
+        }
 
     return hist_data
+
 
 
 
