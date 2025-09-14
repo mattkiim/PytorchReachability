@@ -37,7 +37,7 @@ defaults:
   logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_masked'
   rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/rssm_ckpt.pt'
 
-  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/dreamer.pt'
+  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/rssm_ckpt.pt'
   eval_policy_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/policy.pth'
 
   # logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz'
