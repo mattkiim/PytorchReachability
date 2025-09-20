@@ -25,6 +25,9 @@ defaults:
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv2-torch
   logdir: 'logs/dreamer_dubins_multimodal_v2plus3'
   rssm_ckpt_path: logs/dreamer_dubins_multimodal_v2plus3/rssm_ckpt.pt 
+
+  no_heat: False
+
   traindir: null
   evaldir: null
   offline_traindir: ''

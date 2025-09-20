@@ -158,7 +158,7 @@ wm.eval()
 
 offline_eps = collections.OrderedDict()
 config.batch_size = 1
-config.batch_length = 2
+config.batch_length = 5
 
 config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
 tools.fill_expert_dataset_dubins(config, offline_eps)

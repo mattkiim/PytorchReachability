@@ -22,22 +22,19 @@ def load_dataset(path):
     with open(path, "rb") as f:
         data = pkl.load(f)
 
-    all_rgb, all_ir, all_labels = [], [], []
+    trajectories = []
     for run in data:
-        rgb_seq  = run['obs']['image']      # (T,H,W,3)
-        ir_seq   = run['obs']['heat']       # (T,H,W,1)
-        heat     = np.array(run['obs']['priv_heat'])
-        labels   = (heat > 0.8 - 1e-6).astype(np.int64)  # unsafe if priv_heat ≥ 0.8
+        rgb_seq  = np.array(run['obs']['image'])   # (T,H,W,3)
+        ir_seq   = np.array(run['obs']['heat'])   # (T,H,W,1)
+        heat     = np.array(run['obs']['priv_heat'])       # (T,)
 
-        all_rgb.append(rgb_seq)
-        all_ir.append(ir_seq)
-        all_labels.append(labels)
+        # make binary labels: unsafe if priv_heat ≥ 0.8
+        labels   = (heat >= 0.8).astype(np.int64)
 
-    all_rgb    = np.concatenate(all_rgb, axis=0)
-    all_ir     = np.concatenate(all_ir, axis=0)
-    all_labels = np.concatenate(all_labels, axis=0)
+        trajectories.append((rgb_seq, ir_seq, labels))
 
-    return all_rgb, all_ir, all_labels
+    return trajectories
+
 
 
 def split_dataset(all_rgb, all_ir, all_labels):
@@ -53,6 +50,23 @@ def split_dataset(all_rgb, all_ir, all_labels):
     n_eval  = n_total - n_train - n_calib
 
     return random_split(dataset, [n_train, n_calib, n_eval])
+
+
+def split_dataset_traj(trajectories, seed=42):
+    rng = np.random.default_rng(seed)
+    idxs = np.arange(len(trajectories))
+    rng.shuffle(idxs)
+
+    n_total = len(idxs)
+    n_train = int(0.8 * n_total)
+    n_calib = int(0.1 * n_total)
+    n_eval  = n_total - n_train - n_calib
+
+    train = [trajectories[i] for i in idxs[:n_train]]
+    calib = [trajectories[i] for i in idxs[n_train:n_train+n_calib]]
+    eval  = [trajectories[i] for i in idxs[n_train+n_calib:]]
+
+    return train, calib, eval
 
 
 # -------------------
@@ -87,6 +101,20 @@ def load_config(section_names=None, config_path="configs.yaml"):
 
     return cfg
 
+class FrameDataset(torch.utils.data.Dataset):
+    def __init__(self, trajectories):
+        self.rgb    = np.concatenate([traj[0] for traj in trajectories], axis=0)
+        self.ir     = np.concatenate([traj[1] for traj in trajectories], axis=0)
+        self.labels = np.concatenate([traj[2] for traj in trajectories], axis=0)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        rgb = torch.from_numpy(self.rgb[idx]).float() / 255.0
+        ir  = torch.from_numpy(self.ir[idx]).float() / 255.0
+        label = torch.tensor(self.labels[idx]).long()
+        return rgb, ir, label
 
 # -------------------
 # Classifier
@@ -214,7 +242,56 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
 
     return clf_ts
 
+@torch.no_grad()
+def confusion_for_classifier(
+    clf, 
+    loader, 
+    device, 
+    encoder_fn=None,          # required if loader yields (rgb, ir, labels, _)
+    positive_label=1, 
+    threshold=None            # if None -> argmax; else threshold on P(positive)
+):
+    clf.eval()
+    tp = tn = fp = fn = 0
+    n = 0
 
+    for batch in loader:
+        if len(batch) == 2:        # (feats, labels) from make_eval_loader(...)
+            feats, labels = batch
+        else:                      # (rgb, ir, labels, _) from raw DataLoader
+            assert encoder_fn is not None, "Pass encoder_fn when using raw (rgb, ir, labels, _)"
+            rgb, ir, labels, _ = batch
+            feats = encoder_fn(rgb.to(device), ir.to(device))
+        labels = labels.to(device)
+
+        logits = clf(feats.to(device))
+        if threshold is None:
+            preds = logits.argmax(dim=1)
+        else:
+            probs = torch.softmax(logits, dim=1)
+            preds = (probs[:, positive_label] >= threshold).long()
+
+        # counts
+        tp += torch.sum((preds == positive_label) & (labels == positive_label)).item()
+        tn += torch.sum((preds != positive_label) & (labels != positive_label)).item()
+        fp += torch.sum((preds == positive_label) & (labels != positive_label)).item()
+        fn += torch.sum((preds != positive_label) & (labels == positive_label)).item()
+        n  += labels.numel()
+
+    # metrics
+    acc = (tp + tn) / max(n, 1)
+    tpr = tp / max(tp + fn, 1)           # recall / sensitivity
+    tnr = tn / max(tn + fp, 1)           # specificity
+    ppv = tp / max(tp + fp, 1) if (tp + fp) > 0 else 0.0  # precision
+    npv = tn / max(tn + fn, 1) if (tn + fn) > 0 else 0.0
+    f1  = (2 * ppv * tpr) / max(ppv + tpr, 1e-12) if (ppv + tpr) > 0 else 0.0
+    bal_acc = 0.5 * (tpr + tnr)
+
+    return {
+        "TP": int(tp), "TN": int(tn), "FP": int(fp), "FN": int(fn), 
+        "total": int(n), "f1": f1, "balanced_accuracy": bal_acc,
+        "matrix": [[tp/n, tn/n], [fp/n, fn/n]]
+    }
 
 # -------------------
 # Compute entropy
@@ -252,7 +329,9 @@ def compute_entropy_and_mi(clf, val_loader, device):
 
     print(f"H(Label) = {H_labels:.4f}, "
           f"NLL = {avg_nll:.4f}, "
-          f"MI bound = {mi_bound:.4f}")
+          f"MI bound = {mi_bound:.4f}, "
+          f"MI/H = {(mi_bound/H_labels):.4f}"
+          )
 
     return H_labels, avg_nll, mi_bound
 
@@ -300,11 +379,16 @@ def main():
         p.requires_grad = False
 
     # --- dataset ---
-    all_rgb, all_ir, all_labels = load_dataset("/data/mattkiim/data/wm_demos128_multimodal_v2plus2_6.pkl")
-    train_set, calib_set, eval_set = split_dataset(all_rgb, all_ir, all_labels)
+    trajectories = load_dataset("train_data/wm_demos128_multimodal_v2plus3_info_theory_6.pkl")
+    train_trajs, calib_trajs, eval_trajs = split_dataset_traj(trajectories)
+
+    train_set = FrameDataset(train_trajs)
+    calib_set = FrameDataset(calib_trajs)
+    eval_set  = FrameDataset(eval_trajs)
+    
     train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
     calib_loader = DataLoader(calib_set, batch_size=64, shuffle=False)
-    eval_loader  = DataLoader(eval_set, batch_size=64)
+    eval_loader  = DataLoader(eval_set, batch_size=64, shuffle=False)
 
     # --- encoders ---
     def enc_rgb(rgb, ir): 
@@ -333,8 +417,14 @@ def main():
     clf_both = train_and_eval(enc_both, enc_dim_both, train_loader, calib_loader, eval_loader, config.device, "RGB+IR")
     eval_loader_both = make_eval_loader(enc_both, eval_loader, config.device)
     compute_entropy_and_mi(clf_both, eval_loader_both, config.device)
+    
+    conf_rgb  = confusion_for_classifier(clf_rgb,  eval_loader_rgb,  config.device)
+    conf_ir   = confusion_for_classifier(clf_ir,   eval_loader_ir,   config.device)
+    conf_both = confusion_for_classifier(clf_both, eval_loader_both, config.device)
 
-
+    print("RGB:",  conf_rgb)
+    print("IR:",   conf_ir)
+    print("Both:", conf_both)
 
 
 if __name__ == "__main__":

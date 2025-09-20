@@ -20,12 +20,11 @@ sys.path.append(dreamer_dir)
 import tools
 
 DEFAULT_VEHICLE_TEMP = 255 / 1.1
-MIN_VEHICLE_TEMP = 0. 
+MIN_VEHICLE_TEMP = 0. # TODO: implement this
 
 DEFAULT_RGB_VEHICLE_TEMP = 255
 MIN_RGB_VEHICLE_TEMP = 255/2
 DEFAULT_OBSTACLE_TEMP = 255 / 2 + 0.001
-# DEFAULT_OBSTACLE_TEMP = 0.1
 
 class HeatFrameGenerator:
     def __init__(self, config):
@@ -215,17 +214,14 @@ class HeatFrameGenerator:
       if heat:
         if heat_value is None:
           if not np.any(inside_mask) and self.vehicle_temp_rgb < DEFAULT_RGB_VEHICLE_TEMP:
-            temp = self.vehicle_temp_rgb 
+            temp = self.vehicle_temp_rgb
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
-            
-            norm_heat = 1 - temp_norm
-            if norm_heat > 0.8: 
-              decay_factor = temp_norm * 0.4
-              light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
-              inside_mask = np.squeeze(inside_mask, axis=-1)
-              outside_mask = np.squeeze(outside_mask, axis=-1)
-              rgb_out[inside_mask] = light_blue
-              rgb_out[outside_mask] = light_blue
+            decay_factor = temp_norm * 0.4
+            light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
+            inside_mask = np.squeeze(inside_mask, axis=-1)
+            outside_mask = np.squeeze(outside_mask, axis=-1)
+            rgb_out[inside_mask] = light_blue
+            rgb_out[outside_mask] = light_blue
                   
           if not np.any(inside_mask):
             # self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + alpha_out * 1.2)
@@ -654,10 +650,11 @@ def get_init_state(config):
   states[3] = torch.rand(1) * (v_max - v_min) + v_min
   
   if config.test:
-    states[0] = -1.0 # TODO: comment out
+    states[0] = -0.8 # TODO: comment out
     states[1] = 0.
     states[2] = 0.
     states[3] = 1.
+    # states[4] = 0.5
     
   return states
 
@@ -678,9 +675,7 @@ def gen_one_traj_img(config, curr_traj_count=0):
   v_max = getattr(config, 'v_max', 1.0)
 
   heat = torch.rand(1).item()
-  if config.test:
-    heat = 1.0
-  print(heat)
+  # print(heat)
 
   heat_gen = HeatFrameGenerator(config)
   heat_gen.reset_vehicle_heat(heat=heat) # TODO: pass in heat
@@ -688,7 +683,7 @@ def gen_one_traj_img(config, curr_traj_count=0):
   for t in range(config.data_length):
     # random between -u_max and u_max
     if config.test:
-      ac = torch.tensor([0, 0])
+      ac = torch.tensor([0, -0.5])
     else: 
       steer_rate = torch.rand(1) * 2 * u_max - u_max
       # r = torch.randint(0, 3, (1,), dtype=torch.float32)

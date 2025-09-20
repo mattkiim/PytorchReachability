@@ -390,9 +390,9 @@ class Dreamer(nn.Module):
         self.imgs = data["imgs"]
         self.heat_imgs = data["heat"]
         self.no_heat_imgs = data["no_heat"]
-        self.v = np.zeros((self._config.nx, self._config.ny, 3))
         self.nz = 3  # assuming fixed
         self.nv = 3
+        self.v = np.zeros((self._config.nx, self._config.ny, 3))
 
         print(f"Cache loaded from {cache_path}")
         
@@ -487,8 +487,8 @@ class Dreamer(nn.Module):
         self.idxs = idxs
         self.safe_idxs = np.where(np.array(labels) == 0)
         self.unsafe_idxs = np.where(np.array(labels) == 1)
-        self.theta_lin = thetas[idxs[:, 2]]
-        self.velocity_lin = vels[idxs[:, 3]]
+        self.theta_lin = thetas[idxs[:, 2]] # TODO: this isn't used, so remove it. set it to 2 for now
+        self.velocity_lin = vels[idxs[:, 2]]
         self.imgs = all_rgb_imgs
         self.heat_imgs = all_heat_imgs
         self.no_heat_imgs = all_no_heat_imgs
@@ -602,7 +602,7 @@ class Dreamer(nn.Module):
             for mode_idx, g_x in enumerate(g_x_list):
                 # Fill into (x, y, velocity) grid
                 # print(g_x.shape); quit()
-                self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 3]] = g_x
+                self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
                 v = self.v  # shape (nx, ny, nv)
 
                 tp = np.where(g_x[self.safe_idxs] > 0)

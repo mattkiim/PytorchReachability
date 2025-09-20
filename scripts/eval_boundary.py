@@ -163,55 +163,6 @@ class Dreamer(nn.Module):
                         f"Head '{name}' returned unsupported type: {type(pred)}"
                     )
         return outs
-    
-    @torch.no_grad()
-    def latent_state_test(self, windows: list, warm: int = 5):
-        """
-        Latent State Test (multi-batch):
-        - Observe `warm` timesteps
-        - Take posterior latent z at the last observed step
-        - Evaluate l(z) using the margin head
-        - Compare to ground-truth failure label at that same timestep
-        - Aggregate results across `n_batches`
-        """
-        wm = self._wm
-        agg = dict(TP=0, TN=0, FP=0, FN=0, N=0)
-
-        for batch in windows:
-            data = wm.preprocess(batch)
-            B, T = data["action"].shape[:2]
-
-            # Which latent to score
-            idx = warm-1
-
-            # Posterior latents
-            embed = wm.encoder(data)
-            post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
-            feats = wm.dynamics.get_feat(post)  # [B, T, F]
-
-            z = feats[:, idx]  # [B, F]
-            margin = wm.heads["margin"](z).squeeze(-1)  # [B]
-            pred_unsafe = (margin < 0)
-
-            y = (data["failure"][:, idx] > 0.5)
-
-            TP = (~pred_unsafe & ~y).sum().item()
-            TN = ( pred_unsafe &  y).sum().item()
-            FP = (~pred_unsafe &  y).sum().item()
-            FN = ( pred_unsafe & ~y).sum().item()
-            N  = int(y.numel())
-
-            agg["TP"] += int(TP); agg["TN"] += int(TN)
-            agg["FP"] += int(FP); agg["FN"] += int(FN)
-            agg["N"]  += N
-                
-            agg["tpr"] = agg["TP"] / agg["N"]
-            agg["tnr"] = agg["TN"] / agg["N"]
-            agg["fpr"] = agg["FP"] / agg["N"]
-            agg["fnr"] = agg["FN"] / agg["N"]
-
-        agg["acc"] = (agg["TP"] + agg["TN"]) / max(1, agg["N"])
-        return agg
 
     @torch.no_grad()
     def rollout_16_warm5(self, batch, mode="open", actor_mode=True):
@@ -715,28 +666,29 @@ def main(config, ckpt_path=None, eval_batches=None):
     n_windows = 50  # number of windows you want to evaluate
     shared_batches = [next(eval_dataset) for _ in range(n_windows)]
 
-    # # Open-loop on shared samples
-    # open_stats  = agent.eval_confusion_from_batches(
-    #     shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
-    # )
-    # # Closed-loop on the exact same samples
-    # closed_stats = agent.eval_confusion_from_batches(
-    #     shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
-    # )
+    # Open-loop on shared samples
+    open_stats  = agent.eval_confusion_from_batches(
+        shared_batches, mode="open",  log_prefix="conf/open",  fpr_over_total=True
+    )
+    # Closed-loop on the exact same samples
+    closed_stats = agent.eval_confusion_from_batches(
+        shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
+    )
 
-    # print("\n=== Confusion (Open, same samples) ===")
-    # for k, v in open_stats.items():
-    #     print(f"{k}: {v}")
-
-    # print("\n=== Confusion (Closed, same samples) ===")
-    # for k, v in closed_stats.items():
-    #     print(f"{k}: {v}")
-        
-    
-    latent_state_test = agent.latent_state_test(shared_batches, warm=5)
-    print("\n=== Latent State Test ===")
-    for k, v in latent_state_test.items():
+    print("\n=== Confusion (Open, same samples) ===")
+    for k, v in open_stats.items():
         print(f"{k}: {v}")
+
+    print("\n=== Confusion (Closed, same samples) ===")
+    for k, v in closed_stats.items():
+        print(f"{k}: {v}")
+    
+    
+    # print("\n==== EVAL SUMMARY ====")
+    # print(f"Probe MLP (min eval MSE): {probe_mse:.6f}")
+    # print(f"Held-out recon_sum mean:   {recon_mean:.6f}")
+    # print(f"Held-out total_loss mean:  {total_mean:.6f}")
+    # print("=======================\n")
     
     quit()
     
