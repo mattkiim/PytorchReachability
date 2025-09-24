@@ -31,6 +31,11 @@ defaults:
   # num_train_trajs: 0 ## 3800 in paper
   # dataset_path: '/data/mattkiim/info_theory_hw_dataset.h5'
 
+  ## EVAL
+  num_trajs_eval: 40
+  num_train_trajs_eval: 0
+  dataset_path_eval: '/data/mattkiim/info_theory_hw_dataset.h5'
+
   # num_trajs: 18 ## 4000 in paper
   # num_train_trajs: 0 ## 3800 in paper
   # dataset_path: '/data/mattkiim/merged_eval_5hz.h5'
@@ -65,7 +70,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:0'
+  device: 'cuda:1'
   compile: True
   precision: 32
   debug: False

@@ -643,6 +643,10 @@ def main(config, ckpt_path=None, eval_batches=None):
     # eval_dataset = make_dataset(expert_val_eps, config)
     # print("Length of validation data:", len(expert_val_eps))
     
+    config.num_trajs = config.num_trajs_eval
+    config.num_train_trajs = config.num_train_trajs_eval
+    config.dataset_path = config.dataset_path_eval
+    
     expert_val_eps = collections.OrderedDict()
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     print("Length of validation data (episodes):", len(expert_val_eps))
@@ -705,21 +709,21 @@ def main(config, ckpt_path=None, eval_batches=None):
     # for k, v in closed_stats.items():
     #     print(f"{k}: {v}")
     
-    # # Open-loop (ALL windows)
-    # eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
-    # open_stats = eval_confusion_stream_all(agent, eval_dataset, mode="open", log_prefix="conf_all/open")
+    # Open-loop (ALL windows)
+    eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+    open_stats = eval_confusion_stream_all(agent, eval_dataset, mode="open", log_prefix="conf_all/open")
 
-    # # Closed-loop (ALL windows) – make a fresh iterator
-    # eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
-    # closed_stats = eval_confusion_stream_all(agent, eval_dataset, mode="closed", log_prefix="conf_all/closed")
+    # Closed-loop (ALL windows) – make a fresh iterator
+    eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+    closed_stats = eval_confusion_stream_all(agent, eval_dataset, mode="closed", log_prefix="conf_all/closed")
 
-    # print("\n=== Confusion (Open, ALL) ===")
-    # for k, v in open_stats.items():
-    #     print(f"{k}: {v}")
+    print("\n=== Confusion (Open, ALL) ===")
+    for k, v in open_stats.items():
+        print(f"{k}: {v}")
 
-    # print("\n=== Confusion (Closed, ALL) ===")
-    # for k, v in closed_stats.items():
-    #     print(f"{k}: {v}")
+    print("\n=== Confusion (Closed, ALL) ===")
+    for k, v in closed_stats.items():
+        print(f"{k}: {v}")
         
         
     eval_dataset = make_sliding_eval_dataset(expert_val_eps, window_len=6, stride=3, batch_size=cfg.batch_size)

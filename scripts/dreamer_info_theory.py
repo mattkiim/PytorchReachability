@@ -433,7 +433,7 @@ def make_eval_loader(encoder_fn, eval_loader, device):
 # Main
 # -------------------
 def main():
-    config = load_config(config_path="configs/configs_hw_merged_5hz_fast_avg.yaml")
+    config = load_config(config_path="configs/configs_hw_merged_5hz_fast_avg_norm.yaml")
     tools.set_seed_everywhere(config.seed)
     image_size = 224
     
@@ -480,7 +480,7 @@ def main():
         p.requires_grad = False
 
     # dataset
-    h5_path = config.dataset_path
+    h5_path = config.dataset_path_eval
     all_rgb, all_ir, all_labels, traj_ids_per_frame, key_map = load_dataset(
         h5_path,
         max_trajs=None,
