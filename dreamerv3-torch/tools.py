@@ -314,12 +314,12 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 heat_failure = frac_too_hot > 0.5
             
             else:
-                nonzero_heat_inner = heat_inner # [heat_inner > 0]
-                if nonzero_heat_inner.size > 0: # never gets invoked with the commented out [heat_inner > 0]
+                nonzero_heat_inner = heat_inner[heat_inner > 0]
+                if nonzero_heat_inner.size > 0:
                     heat_avg = np.mean(nonzero_heat_inner)
                 else:
                     heat_avg = 0.0
-                heat_failure = heat_avg > 0.1 # 0.5
+                heat_failure = heat_avg > 0.75
 
             # transition["obs_state"] = np.array([0.]) # fill with dummy value
             transition["privileged_state"] = traj['obs']['priv_state'][t]

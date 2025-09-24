@@ -332,7 +332,12 @@ def save_composite_video(
         ax0 = fig.add_subplot(gs[0, 0])
         ax1 = fig.add_subplot(gs[0, 1])
         ax0.imshow(cam0[t]); ax0.axis("off"); ax0.set_title("Camera 0 (truth)")
-        ax1.imshow(cam2[t]); ax1.axis("off"); ax1.set_title("Camera 2 (truth)")
+        im = ax1.imshow(cam2[t, ..., 0], cmap="plasma", vmin=0, vmax=255)
+        ax1.axis("off")
+        ax1.set_title("Camera 2 (truth)")
+        cbar = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=6)
+        cbar.set_ticks([])
 
         r = 1
 
@@ -344,8 +349,15 @@ def save_composite_video(
                 axm0.imshow(model_cam[t]); axm0.axis("off"); axm0.set_title("Decoded RGB (model)")
             else:
                 axm0.axis("off")
+
             if model_heat is not None:
-                axm1.imshow(np.repeat(model_heat[t], 3, axis=-1)); axm1.axis("off"); axm1.set_title("Decoded Heat (model)")
+                im = axm1.imshow(model_heat[t, ..., 0], cmap="plasma", vmin=0, vmax=255)
+                axm1.axis("off")
+                axm1.set_title("Decoded Heat (model)")
+                # add a slim colorbar
+                cbar = fig.colorbar(im, ax=axm1, fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(labelsize=6)
+                cbar.set_ticks([])
             else:
                 axm1.axis("off")
             r += 1

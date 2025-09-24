@@ -492,7 +492,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     policy_mm   = build_policy_for_value(cfg_mm)
 
     path = cfg.dataset_path
-    vid_path = f"traj_videos/{cfg.dataset_name}"
+    vid_path = f"traj_videos/{cfg.dataset_name}_avg_norm"
     video_dir = pathlib.Path(vid_path); video_dir.mkdir(parents=True, exist_ok=True)
 
     device = next(wm_rgb.parameters()).device
@@ -508,7 +508,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
             actions_ds  = f[run]["actions"][:]
             T           = heat_inner.shape[0]
 
-            if i != 27: continue
+            # if i != 27: continue
 
             # Failure labels (same as your code)
             failure = []
@@ -521,8 +521,9 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
             else:
                 for t in range(T):
                     frame = heat_inner[t]
+                    frame = frame[frame > 0]
                     heat_avg = np.mean(frame) if frame.size > 0 else 0.0
-                    failure.append(heat_avg > 0.1)
+                    failure.append(heat_avg > 0.7)
             failure = np.asarray(failure, dtype=np.float32)
 
             # --- Roll out both policies
