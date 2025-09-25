@@ -74,8 +74,13 @@ def load_dataset(
                     frac_too_hot = (np.sum(hi[frame_wax] > too_hot_threshold) / float(count)) if count > 0 else 0.0
                     heat_failure = frac_too_hot > frac_too_hot_threshold
                 else:
+                    hi = hi[hi > 0]
                     heat_avg = float(np.mean(hi)) if hi.size > 0 else 0.0
-                    heat_failure = heat_avg > avg_heat_threshold
+                    heat_failure = heat_avg > 0.75
+                    
+                    # heat_avg = float(np.mean(hi)) if hi.size > 0 else 0.0
+                    # heat_failure = heat_avg > 0.1
+                    
                 labels_list.append(int(heat_failure))
 
             all_rgb.append(rgb_seq.astype(np.uint8))
@@ -119,8 +124,8 @@ def split_dataset_traj(all_rgb, all_ir, all_labels, traj_ids_per_frame, seed=42)
     rng = np.random.default_rng(seed)
     rng.shuffle(all_traj_ids)
 
-    n_train = int(0.8 * num_trajs)
-    n_calib = int(0.1 * num_trajs)
+    n_train = int(0.7 * num_trajs)
+    n_calib = int(0.15 * num_trajs)
     n_eval  = num_trajs - n_train - n_calib
 
     train_trajs = set(all_traj_ids[:n_train])
@@ -250,7 +255,7 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     # train
-    for epoch in range(20):
+    for epoch in range(10):
         clf.train()
         total_loss = 0
         for rgb, ir, labels, _ in train_loader:
