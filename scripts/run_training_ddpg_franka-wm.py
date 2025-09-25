@@ -70,7 +70,7 @@ def get_args():
 
     yml = yaml.YAML(typ="safe", pure=True)
     print('cofnig path: ', config.config_path)
-    config.config_path = 'configs/configs_hw_merged_5hz_fast_avg_masked.yaml' # for franka-wm
+    config.config_path = 'configs/configs_hw_merged_5hz_fast_avg_masked_norm.yaml' # for franka-wm
     configs = yml.load(
         (pathlib.Path(sys.argv[0]).parent / f"../{config.config_path}").read_text()
     )

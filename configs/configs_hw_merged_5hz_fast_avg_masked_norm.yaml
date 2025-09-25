@@ -35,11 +35,11 @@ defaults:
 
   # dataset_path: '/data/mattkiim/hw_test.h5'
   dataset_path: '/data/mattkiim/merged_5hz.h5'
-  logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_masked'
-  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/rssm_ckpt.pt'
+  logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_norm'
+  rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_norm/rssm_ckpt.pt'
 
-  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/rssm_ckpt.pt'
-  eval_policy_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked/policy.pth'
+  eval_rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_norm/rssm_ckpt.pt'
+  eval_policy_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_masked_norm/policy.pth'
 
   # logdir: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz'
   # rssm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_warmup_lz/rssm_ckpt.pt'
@@ -56,7 +56,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:0'
+  device: 'cuda:1'
   compile: True
   precision: 32
   debug: True
