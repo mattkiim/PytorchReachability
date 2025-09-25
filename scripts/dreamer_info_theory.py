@@ -74,8 +74,13 @@ def load_dataset(
                     frac_too_hot = (np.sum(hi[frame_wax] > too_hot_threshold) / float(count)) if count > 0 else 0.0
                     heat_failure = frac_too_hot > frac_too_hot_threshold
                 else:
+                    hi = hi[hi > 0]
                     heat_avg = float(np.mean(hi)) if hi.size > 0 else 0.0
-                    heat_failure = heat_avg > avg_heat_threshold
+                    heat_failure = heat_avg > 0.75
+                    
+                    # heat_avg = float(np.mean(hi)) if hi.size > 0 else 0.0
+                    # heat_failure = heat_avg > 0.1
+                    
                 labels_list.append(int(heat_failure))
 
             all_rgb.append(rgb_seq.astype(np.uint8))
@@ -119,7 +124,7 @@ def split_dataset_traj(all_rgb, all_ir, all_labels, traj_ids_per_frame, seed=42)
     rng = np.random.default_rng(seed)
     rng.shuffle(all_traj_ids)
 
-    n_train = int(0.8 * num_trajs)
+    n_train = int(0.6 * num_trajs)
     n_calib = int(0.1 * num_trajs)
     n_eval  = num_trajs - n_train - n_calib
 
@@ -212,7 +217,7 @@ class ModelWithTemperature(nn.Module):
         """Tune temperature on calibration set by minimizing NLL."""
         self.to(device)
         nll_criterion = nn.CrossEntropyLoss()
-        optimizer = optim.LBFGS([self.log_temperature], lr=0.01, max_iter=50)
+        optimizer = optim.LBFGS([self.log_temperature], lr=1e-2, max_iter=50)
 
         def eval():
             loss = 0
@@ -246,7 +251,7 @@ def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader,
     print(f"\n==== Training {tag} classifier ====")
 
     clf = MLPClassifier(enc_dim).to(device)
-    opt = optim.Adam(clf.parameters(), lr=1e-4)
+    opt = optim.Adam(clf.parameters(), lr=5e-5)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     # train
@@ -433,7 +438,7 @@ def make_eval_loader(encoder_fn, eval_loader, device):
 # Main
 # -------------------
 def main():
-    config = load_config(config_path="configs/configs_hw_merged_5hz_fast_avg_masked.yaml")
+    config = load_config(config_path="configs/configs_hw_merged_5hz_fast_avg_masked_norm.yaml")
     tools.set_seed_everywhere(config.seed)
     image_size = 224
     
@@ -480,7 +485,7 @@ def main():
         p.requires_grad = False
 
     # dataset
-    h5_path = config.dataset_path
+    h5_path = config.dataset_path_eval
     all_rgb, all_ir, all_labels, traj_ids_per_frame, key_map = load_dataset(
         h5_path,
         max_trajs=None,
@@ -489,11 +494,10 @@ def main():
         hot_mask_threshold=0.0,
         too_hot_threshold=0.6,
         frac_too_hot_threshold=0.5,
-        avg_heat_threshold=0.1,
     )
     train_set, calib_set, eval_set = split_dataset_traj(all_rgb, all_ir, all_labels, traj_ids_per_frame, seed=config.seed)
     
-    num_classes = 2  # you use 2-way classification
+    num_classes = 2
     class_weights, class_counts = compute_class_weights_from_subset(
         train_set, num_classes=num_classes, device=config.device
     )

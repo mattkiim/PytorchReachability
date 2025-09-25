@@ -644,6 +644,11 @@ def main(config, ckpt_path=None, eval_batches=None):
     # print("Length of validation data:", len(expert_val_eps))
     
     expert_val_eps = collections.OrderedDict()
+    
+    config.dataset_path = config.dataset_path_eval
+    config.num_trajs = config.num_trajs_eval
+    config.num_train_trajs = config.num_train_trajs_eval
+
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     print("Length of validation data (episodes):", len(expert_val_eps))
 
