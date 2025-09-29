@@ -492,6 +492,9 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     policy_mm   = build_policy_for_value(cfg_mm)
 
     path = cfg.dataset_path
+    path = cfg.eval_mm_dataset_path
+    cfg.dataset_name = "mm"
+    
     vid_path = f"traj_videos/{cfg.dataset_name}_avg_norm"
     video_dir = pathlib.Path(vid_path); video_dir.mkdir(parents=True, exist_ok=True)
 
@@ -523,7 +526,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
                     frame = heat_inner[t]
                     frame = frame[frame > 0]
                     heat_avg = np.mean(frame) if frame.size > 0 else 0.0
-                    failure.append(heat_avg > 0.7)
+                    failure.append(heat_avg > 0.75)
             failure = np.asarray(failure, dtype=np.float32)
 
             # --- Roll out both policies

@@ -748,6 +748,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     policy_mm   = build_policy_for_value(cfg_mm)
 
     path = cfg.dataset_path
+    # path = cfg.eval_mm_dataset_path
     vid_path = f"traj_videos/test"
     video_dir = pathlib.Path(vid_path); video_dir.mkdir(parents=True, exist_ok=True)
 
@@ -755,20 +756,29 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     use_amp = True if getattr(cfg, "precision", 32) == 16 else False
 
     with h5py.File(path, "r") as f:
-        s = 222
+        # s = 222
+        # s = 180
+        s = 115
+        # s = 75
+        # s = 115
         e = s + 21
         for i, run in enumerate(f, start=1):
             cam0        = f[run]["camera_0"][s:e]
-            cam2        = f[run]["camera_2"][s:e]
+            cam2        = f[run]["camera_2"][s:e][..., :1]
             heat_inner  = np.squeeze(f[run]["hot_inner"][s:e], -1)
             arm_states  = torch.tensor(f[run]['ee_states'][s:e])
             grip_states = torch.tensor(f[run]['gripper_states'][s:e])
             actions_ds  = f[run]["actions"][s:e]
             
+            
             obs_state = f[run]["states"][s:e]
             T           = heat_inner.shape[0]
 
-            if i != 27: continue
+            # if i != 27: continue
+            # if i != 33: continue
+            if i != 9: continue
+            # if i != 10: continue
+            # if i != 19: continue
 
             # Failure labels (same as your code)
             failure = []
@@ -781,8 +791,9 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
             else:
                 for t in range(T):
                     frame = heat_inner[t]
+                    frame = frame[frame > 0]
                     heat_avg = np.mean(frame) if frame.size > 0 else 0.0
-                    failure.append(heat_avg > 0.1)
+                    failure.append(heat_avg > 0.75)
             failure = np.asarray(failure, dtype=np.float32)
 
             # # --- Roll out both policies (open-loop with dataset actions)

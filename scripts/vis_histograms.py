@@ -98,7 +98,7 @@ def build_policy_for_value(cfg):
 def evaluate_V(policy, z):
     tmp_batch = Batch(obs=z.reshape(1, -1), info=Batch())
     tmp = policy.critic_old(tmp_batch.obs, policy(tmp_batch, model="actor_old").act)
-    return tmp.cpu().detach().numpy().flatten()[0]
+    return tmp.cpu().detach().numpy().flatten()
 
 
 def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_states, actions, device, use_heat):
@@ -112,8 +112,10 @@ def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_stat
     ])
 
     rs_hist, flir_hist, state_hist, action_hist = [], [], [], []
-    seq_len = 5
+    seq_len = 3
 
+    min_val = 1
+    
     T = cam0.shape[0]
     for t in range(T):
         img_rs = cam0[t]
@@ -131,6 +133,7 @@ def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_stat
 
         ee_state = eef_pose_to_state(arm_states[t].reshape(4, 4).T, grip_states[t])
         norm_ac = normalize_acs(torch.tensor([actions[t]], device=device), device=device)
+        
 
         if len(rs_hist) == seq_len: rs_hist.pop(0)
         if len(flir_hist) == seq_len: flir_hist.pop(0)
@@ -176,8 +179,13 @@ def first_crossing_intensity(wm, policy, cam0, cam2, heat, arm_states, grip_stat
         z = feat[:, -1].detach().cpu().numpy().squeeze()
 
         Vz = evaluate_V(policy, z)
+        min_val = min(min_val, Vz)
         if Vz <= 0.3:
-            return heat[t].mean()
+            heat_nonzero = heat[t]
+            heat_nonzero = heat_nonzero[heat_nonzero > 0]
+            return heat_nonzero.mean()
+        # elif Vz > 0.3 and t == T-1: # comment out
+        #     return min_val + 1
 
     return None
 
@@ -201,9 +209,10 @@ def run_histogram(cfg, deployments):
 
     os.makedirs("eval/histograms", exist_ok=True)
 
-    for name, (rssm_ckpt, policy_ckpt, use_heat) in deployments.items():
+    for name, (rssm_ckpt, policy_ckpt, use_heat, dataset_path) in deployments.items():
         cfg.eval_rssm_ckpt_path = rssm_ckpt
         cfg.eval_policy_ckpt_path = policy_ckpt
+        cfg.dataset_path = dataset_path
         wm = build_world_model(cfg)
         policy = build_policy_for_value(cfg)
         device = cfg.device
@@ -240,7 +249,7 @@ def run_histogram(cfg, deployments):
 
         # Histogram in density mode so PDFs overlay directly
         bins = 40
-        rng = (-0.1, 0.2)
+        rng = (-0.1, 1.0)
         counts, bin_edges = np.histogram(vals, bins=bins, range=rng, density=True)
 
         # --- Gaussian fit (MLE via sample mean/std) ---
@@ -332,8 +341,18 @@ if __name__ == "__main__":
     cfg.num_actions = 7
 
     deployments = {
-        "rgb": (cfg.eval_rssm_rgb_only_ckpt_path, cfg.eval_policy_rgb_only_ckpt_path, False),
-        "mm": (cfg.eval_rssm_mm_ckpt_path, cfg.eval_policy_mm_ckpt_path, True),
+        "rgb": (
+            cfg.eval_rssm_rgb_only_ckpt_path,
+            cfg.eval_policy_rgb_only_ckpt_path,
+            False,
+            cfg.eval_rgb_dataset_path
+        ),
+        "mm": (
+            cfg.eval_rssm_mm_ckpt_path,
+            cfg.eval_policy_mm_ckpt_path,
+            True,
+            cfg.eval_mm_dataset_path
+        ),
         # "masked": (cfg.eval_rssm_masked_ckpt_path, cfg.eval_policy_masked_ckpt_path, True),
     }
 

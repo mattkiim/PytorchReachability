@@ -38,11 +38,13 @@ defaults:
   dataset_path: '/data/mattkiim/info_theory_hw_dataset.h5'
 
 
-  eval_rssm_mm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg/dreamer.pt'
-  eval_policy_mm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg/policy.pth'
+  eval_rssm_mm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_norm/dreamer.pt'
+  eval_policy_mm_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_norm/policy.pth'
+  eval_mm_dataset_path: '/data/mattkiim/eval_multimodal_v2.h5'
 
-  eval_rssm_rgb_only_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only/dreamer.pt'
-  eval_policy_rgb_only_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only/policy.pth'
+  eval_rssm_rgb_only_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only_norm/dreamer.pt'
+  eval_policy_rgb_only_ckpt_path: '/data/mattkiim/runs/merged_5hz_fast_avg_rgb_only_norm/policy.pth'
+  eval_rgb_dataset_path: '/data/mattkiim/eval_rgb_v2.h5'
 
 
   traindir: null
