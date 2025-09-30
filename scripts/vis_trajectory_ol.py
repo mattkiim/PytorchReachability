@@ -754,7 +754,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     use_amp = True if getattr(cfg, "precision", 32) == 16 else False
 
     with h5py.File(path, "r") as f:
-        s = 107
+        s = 110
         e = s + 21
         for i, run in enumerate(f, start=1):
             cam0        = f[run]["camera_0"][s:e]
