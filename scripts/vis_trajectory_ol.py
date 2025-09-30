@@ -17,6 +17,12 @@ from PyHJ.policy import avoid_DDPGPolicy_annealing as DDPGPolicy
 from scipy.spatial.transform import Rotation as R
 from torchvision import transforms
 
+torch.manual_seed(0)
+torch.cuda.manual_seed_all(0)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+torch.use_deterministic_algorithms(True, warn_only=True)
+
 # Project paths
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -748,7 +754,7 @@ def main(cfg, ckpt_path=None, wm=None, policy=None):
     use_amp = True if getattr(cfg, "precision", 32) == 16 else False
 
     with h5py.File(path, "r") as f:
-        s = 115
+        s = 107
         e = s + 21
         for i, run in enumerate(f, start=1):
             cam0        = f[run]["camera_0"][s:e]
