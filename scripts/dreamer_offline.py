@@ -660,6 +660,8 @@ def main(config):
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_val_eps, config)
     
+    quit()
+    
 
     def inspect_dataset(dataset, n_eps=2):
         for k, traj in list(dataset.items())[:n_eps]:

@@ -286,7 +286,7 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
         elif i >= num_train and not is_val_set:
             break
         traj = demo
-        # print(traj["key"])
+        print(traj["key"])
         # if traj["key"] != "trajectory_16" and traj["key"] != "trajectory_4" and traj["key"] != "trajectory_5" and traj["key"] != "trajectory_6": continue
         
         for t in range(len(traj["obs"][pixel_keys[0]])):

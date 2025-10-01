@@ -61,7 +61,8 @@ def run_histogram(datasets, out_dir="eval/histograms", threshold=0.3):
                     results.append(val)
 
         vals = np.asarray(results, dtype=float)
-
+        print(vals)
+        
         # --- stats ---
         mu, sigma = np.mean(vals), np.std(vals)
         print(f"[{name}] μ={mu:.4f}, σ={sigma:.4f}")
@@ -82,7 +83,6 @@ def run_histogram(datasets, out_dir="eval/histograms", threshold=0.3):
         out_path = os.path.join(out_dir, f"histogram_brt03_{name}.png")
         plt.savefig(out_path, dpi=200)
         plt.close()
-        print(f"💾 Saved {out_path}")
 
 
 if __name__ == "__main__":
