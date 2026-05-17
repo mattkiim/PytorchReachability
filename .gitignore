@@ -17,6 +17,7 @@ experiment_script/final_runs/new_backup
 experiment_script/final_runs/new_sac_experiments
 experiment_script/final_runs/new_new_backup
 
+traj_videos/
 wandb/
 logs/
 wm_demos*.pkl
