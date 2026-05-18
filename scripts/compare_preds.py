@@ -65,9 +65,10 @@ def main():
     args = parser.parse_args()
 
     modes = [
-        ("Open rollout",   "open_preds.npy",   "open_gt.npy"),
-        ("Closed rollout", "closed_preds.npy", "closed_gt.npy"),
-        ("Latent state",   "latent_preds.npy", "latent_gt.npy"),
+        ("Open rollout (warm=5)",  "open_preds.npy",        "open_gt.npy"),
+        ("Open rollout (warm=3)",  "open_warm3_preds.npy",  "open_warm3_gt.npy"),
+        ("Closed rollout",         "closed_preds.npy",      "closed_gt.npy"),
+        ("Latent state",           "latent_preds.npy",      "latent_gt.npy"),
     ]
 
     for name, preds_file, gt_file in modes:

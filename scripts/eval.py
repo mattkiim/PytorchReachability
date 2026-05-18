@@ -311,10 +311,10 @@ class Dreamer(nn.Module):
         return dict(TP=int(TP), TN=int(TN), FP=int(FP), FN=int(FN), total=total)
 
     @torch.no_grad()
-    def raw_preds_16_warm5(self, batch, mode="closed"):
+    def raw_preds_16_warm5(self, batch, mode="closed", warm=5):
         """Returns flat (pred_unsafe, gt_unsafe) numpy bool arrays for one batch."""
-        H, WARM = 21, 5
-        FUT = H - WARM
+        FUT = 16
+        WARM = warm
         wm = self._wm
         data = wm.preprocess(batch)
         B, T = data["action"].shape[:2]
@@ -597,7 +597,7 @@ def eval_confusion_stream_all(agent, dataset_iter, mode="open", actor_mode=True,
 
 
 @torch.no_grad()
-def collect_preds_stream_all(agent, dataset_iter, mode="closed"):
+def collect_preds_stream_all(agent, dataset_iter, mode="closed", warm=5):
     """Collect flat per-sample (pred_unsafe, gt_unsafe) numpy arrays over all windows."""
     all_preds, all_gt = [], []
     while True:
@@ -605,7 +605,7 @@ def collect_preds_stream_all(agent, dataset_iter, mode="closed"):
             batch = next(dataset_iter)
         except StopIteration:
             break
-        pred, gt = agent.raw_preds_16_warm5(batch, mode=mode)
+        pred, gt = agent.raw_preds_16_warm5(batch, mode=mode, warm=warm)
         all_preds.append(pred)
 
         all_gt.append(gt)
@@ -800,9 +800,14 @@ def main(config, ckpt_path=None, eval_batches=None, save_preds=None):
         os.makedirs(save_preds, exist_ok=True)
 
         eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
-        preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="open")
+        preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="open", warm=5)
         np.save(os.path.join(save_preds, "open_preds.npy"), preds)
         np.save(os.path.join(save_preds, "open_gt.npy"), gt)
+
+        eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+        preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="open", warm=3)
+        np.save(os.path.join(save_preds, "open_warm3_preds.npy"), preds)
+        np.save(os.path.join(save_preds, "open_warm3_gt.npy"), gt)
 
         eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
         preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="closed")
