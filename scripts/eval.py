@@ -311,6 +311,35 @@ class Dreamer(nn.Module):
         return dict(TP=int(TP), TN=int(TN), FP=int(FP), FN=int(FN), total=total)
 
     @torch.no_grad()
+    def raw_preds_16_warm5(self, batch, mode="closed"):
+        """Returns flat (pred_unsafe, gt_unsafe) numpy bool arrays for one batch."""
+        import numpy as np
+        H, WARM = 21, 5
+        FUT = H - WARM
+        wm = self._wm
+        data = wm.preprocess(batch)
+        B, T = data["action"].shape[:2]
+        t0 = max(0, T - (WARM + FUT) - 1)
+
+        embed = wm.encoder(data)
+        post, prior = wm.dynamics.observe(embed, data["action"], data["is_first"])
+        curr = {k: v[:, t0 + WARM] for k, v in post.items()}
+
+        if mode == "open":
+            a_seq = data["action"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
+            prior = wm.dynamics.imagine_with_action(a_seq, curr)
+            imag_feat = wm.dynamics.get_feat(prior)
+        else:
+            cl_states = {k: v[:, t0 + WARM + 1 : t0 + WARM + 1 + FUT] for k, v in post.items()}
+            imag_feat = wm.dynamics.get_feat(cl_states)
+
+        margin = self._wm.heads["margin"](imag_feat)
+        margin = margin.squeeze(-1) if margin.dim() == 3 else margin
+        pred_unsafe = (margin < 0).cpu().numpy().flatten()
+        gt_unsafe = (data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT] > 0.5).cpu().numpy().flatten()
+        return pred_unsafe, gt_unsafe
+
+    @torch.no_grad()
     def eval_confusion_from_batches(self, batches, mode="open", actor_mode=True, log_prefix=None,
                                    fpr_over_total=True):
         """
@@ -568,7 +597,23 @@ def eval_confusion_stream_all(agent, dataset_iter, mode="open", actor_mode=True,
 
 
 
-def main(config, ckpt_path=None, eval_batches=None):
+@torch.no_grad()
+def collect_preds_stream_all(agent, dataset_iter, mode="closed"):
+    """Collect flat per-sample (pred_unsafe, gt_unsafe) numpy arrays over all windows."""
+    import numpy as np
+    all_preds, all_gt = [], []
+    while True:
+        try:
+            batch = next(dataset_iter)
+        except StopIteration:
+            break
+        pred, gt = agent.raw_preds_16_warm5(batch, mode=mode)
+        all_preds.append(pred)
+        all_gt.append(gt)
+    return np.concatenate(all_preds), np.concatenate(all_gt)
+
+
+def main(config, ckpt_path=None, eval_batches=None, save_preds=None):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
@@ -724,8 +769,17 @@ def main(config, ckpt_path=None, eval_batches=None):
     print("\n=== Confusion (Closed, ALL) ===")
     for k, v in closed_stats.items():
         print(f"{k}: {v}")
-        
-        
+
+    if save_preds:
+        import os, numpy as np
+        os.makedirs(save_preds, exist_ok=True)
+        eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+        preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="closed")
+        np.save(os.path.join(save_preds, "preds.npy"), preds)
+        np.save(os.path.join(save_preds, "gt.npy"), gt)
+        print(f"\nSaved {len(preds)} per-sample predictions to {save_preds}/")
+
+
     eval_dataset = make_sliding_eval_dataset(expert_val_eps, window_len=6, stride=3, batch_size=cfg.batch_size)
     ls_test = agent.latent_state_test_sliding_fixed(eval_dataset, warm=5)
     print("\n=== Latent State Test ===")
@@ -744,6 +798,7 @@ if __name__ == "__main__":
     parser.add_argument("--configs", nargs="+")
     parser.add_argument("--ckpt_path", type=str, default=None, help="Path to a checkpoint (defaults to logdir/latest.pt)")
     parser.add_argument("--eval_batches", type=int, default=None, help="Override number of held-out eval batches")
+    parser.add_argument("--save_preds", type=str, default=None, help="Directory to save per-sample preds.npy and gt.npy")
     args, remaining = parser.parse_known_args()
 
     yaml_loader = yaml.YAML(typ="safe", pure=True)
@@ -772,4 +827,4 @@ if __name__ == "__main__":
     cfg.rssm_train_steps = 0
 
     # Run eval-only
-    main(cfg, ckpt_path=args.ckpt_path, eval_batches=args.eval_batches)
+    main(cfg, ckpt_path=args.ckpt_path, eval_batches=args.eval_batches, save_preds=args.save_preds)
