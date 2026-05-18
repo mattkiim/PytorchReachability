@@ -313,7 +313,6 @@ class Dreamer(nn.Module):
     @torch.no_grad()
     def raw_preds_16_warm5(self, batch, mode="closed"):
         """Returns flat (pred_unsafe, gt_unsafe) numpy bool arrays for one batch."""
-        import numpy as np
         H, WARM = 21, 5
         FUT = H - WARM
         wm = self._wm
@@ -600,7 +599,6 @@ def eval_confusion_stream_all(agent, dataset_iter, mode="open", actor_mode=True,
 @torch.no_grad()
 def collect_preds_stream_all(agent, dataset_iter, mode="closed"):
     """Collect flat per-sample (pred_unsafe, gt_unsafe) numpy arrays over all windows."""
-    import numpy as np
     all_preds, all_gt = [], []
     while True:
         try:
@@ -609,7 +607,35 @@ def collect_preds_stream_all(agent, dataset_iter, mode="closed"):
             break
         pred, gt = agent.raw_preds_16_warm5(batch, mode=mode)
         all_preds.append(pred)
+
         all_gt.append(gt)
+    return np.concatenate(all_preds), np.concatenate(all_gt)
+
+
+@torch.no_grad()
+def collect_latent_state_preds_stream(agent, dataset_iter, warm=5):
+    """Collect flat per-sample (pred_unsafe, gt_unsafe) for the latent state test."""
+    wm = agent._wm
+    all_preds, all_gt = [], []
+    while True:
+        try:
+            batch = next(dataset_iter)
+        except StopIteration:
+            break
+        data = wm.preprocess(batch)
+        B, T = data["action"].shape[:2]
+        if T < warm + 1:
+            continue
+        embed = wm.encoder(data)
+        post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
+        feats = wm.dynamics.get_feat(post)
+        idx = warm - 1
+        z = feats[:, idx]
+        margin = wm.heads["margin"](z).squeeze(-1)
+        pred_unsafe = (margin < 0).cpu().numpy().flatten()
+        gt_unsafe = (data["failure"][:, idx] > 0.5).cpu().numpy().flatten()
+        all_preds.append(pred_unsafe)
+        all_gt.append(gt_unsafe)
     return np.concatenate(all_preds), np.concatenate(all_gt)
 
 
@@ -771,13 +797,24 @@ def main(config, ckpt_path=None, eval_batches=None, save_preds=None):
         print(f"{k}: {v}")
 
     if save_preds:
-        import os, numpy as np
         os.makedirs(save_preds, exist_ok=True)
+
+        eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
+        preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="open")
+        np.save(os.path.join(save_preds, "open_preds.npy"), preds)
+        np.save(os.path.join(save_preds, "open_gt.npy"), gt)
+
         eval_dataset = make_sliding_eval_dataset(expert_val_eps, 21, 10, config.batch_size)
         preds, gt = collect_preds_stream_all(agent, eval_dataset, mode="closed")
-        np.save(os.path.join(save_preds, "preds.npy"), preds)
-        np.save(os.path.join(save_preds, "gt.npy"), gt)
-        print(f"\nSaved {len(preds)} per-sample predictions to {save_preds}/")
+        np.save(os.path.join(save_preds, "closed_preds.npy"), preds)
+        np.save(os.path.join(save_preds, "closed_gt.npy"), gt)
+
+        eval_dataset = make_sliding_eval_dataset(expert_val_eps, 6, 3, config.batch_size)
+        preds, gt = collect_latent_state_preds_stream(agent, eval_dataset, warm=5)
+        np.save(os.path.join(save_preds, "latent_preds.npy"), preds)
+        np.save(os.path.join(save_preds, "latent_gt.npy"), gt)
+
+        print(f"\nSaved predictions (open/closed/latent) to {save_preds}/")
 
 
     eval_dataset = make_sliding_eval_dataset(expert_val_eps, window_len=6, stride=3, batch_size=cfg.batch_size)
