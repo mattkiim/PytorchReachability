@@ -26,3 +26,5 @@ train_data
 eval
 gt_dubins
 traj_videos/
+
+.claude/
