@@ -95,8 +95,7 @@ Each config corresponds to a specific experiment from the paper:
 | Config | Experiment |
 |---|---|
 | `configs_po.yaml` | PO main experiment (estimation gap) |
-| `configs_fo.yaml` | FO baseline (full observability) |
-| `configs_fo_priv_heat.yaml` | Privileged supervision mitigation (Section 5.1) |
+| `configs_fo.yaml` | FO baseline (full observability); pass `--obs_priv_heat True` to enable privileged heat supervision (Section 5.1) |
 | `configs_po_no_heat.yaml` | Ablation: no heat channel in observation |
 | `configs_po_info_theory.yaml` | MI diagnostic (Section 4), smaller dataset |
 

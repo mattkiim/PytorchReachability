@@ -17,14 +17,14 @@ defaults:
   num_trajs: 4000 ## 4000 in paper
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/fo'
-  wm_cache_path: 'cache/wm/fo'
-  hj_cache_path: 'cache/hj/fo'
+  dataset_path: 'train_data/fo_priv_heat'
+  wm_cache_path: 'cache/wm/fo_priv_heat'
+  hj_cache_path: 'cache/hj/fo_priv_heat'
   ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/fo'
-  rssm_ckpt_path: logs/fo/rssm_ckpt.pt
+  logdir: 'logs/fo_priv_heat'
+  rssm_ckpt_path: logs/fo_priv_heat/rssm_ckpt.pt
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -43,7 +43,7 @@ defaults:
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 30001 ## 10000
+  rssm_train_steps: 15001 ## 10000
   
   # Environment
   task: 'dubins-wm'
@@ -168,16 +168,15 @@ defaults:
   multimodal: True
   aug_rssm: True
   heat_mode: 3
-  heat_prop: 0.0 # 0.5
-  heat_threshold: 0.79
+  heat_prop: 0.0
+  heat_threshold: 0.8
   fill_cache: True
   use_wandb: False
 
-  alpha_in: 8
-  alpha_out: 2
+  alpha_in: 12
+  alpha_out: 20
   test: False
 
   include_no_heat_vis: False
-  obs_priv_heat: False # whether to use privileged heat in the observation state
+  obs_priv_heat: False
   use_pil: True
-  include_outline: True
