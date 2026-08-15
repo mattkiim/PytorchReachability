@@ -389,15 +389,15 @@ def make_cache(config, vels, heat_values):
                     if config.include_no_heat_vis:
                         no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif config.heat_mode == 2:
-                    img = gen.get_rgb_v2(img, config, heat=True)
-                    heat, _ = gen.get_heat_frame_v2(img, config, heat=True, heat_value=heat_value)
+                    img = gen.get_rgb_po(img, config, heat=True)
+                    heat, _ = gen.get_heat_frame_po(img, config, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v2(img, config, heat=False, heat_value=heat_value)
+                        no_heat, _ = gen.get_heat_frame_po(img, config, heat=False, heat_value=heat_value)
                 elif config.heat_mode == 3:
-                    img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
-                    heat, _ = gen.get_heat_frame_v3(img, config, heat=True, heat_value=heat_value)
+                    img = gen.get_rgb_fo(img, config, heat=True, heat_value=heat_value)
+                    heat, _ = gen.get_heat_frame_fo(img, config, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value) # BUG: heat=False seems to remove vehicle
+                        no_heat, _ = gen.get_heat_frame_fo(img, heat=False, heat_value=heat_value) # BUG: heat=False seems to remove vehicle
                 else:
                     raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
 
@@ -657,11 +657,11 @@ def single_rollout(initial_conditions, config, T=100, target=None):
             gen._compute_geometry(img_og.shape)
 
             if config.heat_mode == 3:
-                img = gen.get_rgb_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
-                heat, _ = gen.get_heat_frame_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                img = gen.get_rgb_fo(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                heat, _ = gen.get_heat_frame_fo(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 2:
-                img = gen.get_rgb_v2(img_og, config, heat=True)
-                heat, _ = gen.get_heat_frame_v2(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                img = gen.get_rgb_po(img_og, config, heat=True)
+                heat, _ = gen.get_heat_frame_po(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 1:
                 heat = gen.get_heat_frame_v1(img_og, heat=True)
             elif config.heat_mode == 0:

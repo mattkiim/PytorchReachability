@@ -357,7 +357,7 @@ def make_eval_loader(encoder_fn, eval_loader, device):
 # Main
 # -------------------
 def main():
-    config = load_config(config_path="configs/configs_v2.yaml")
+    config = load_config(config_path="configs/configs_po.yaml")
     tools.set_seed_everywhere(config.seed)
     image_size = 128
     act_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)

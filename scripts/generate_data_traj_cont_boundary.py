@@ -106,16 +106,16 @@ class HeatFrameGenerator:
 
         return heat_frame
     
-    def get_heat_frame_v2(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None):
+    def get_heat_frame_po(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None):
         '''
         partial observability
         
         if you spend too long in unsafe, become different color when exiting (RGB)
         the heat map should be the same as v3
         '''
-        return self.get_heat_frame_v3(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out, heat_value=heat_value)
+        return self.get_heat_frame_fo(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out, heat_value=heat_value)
 
-    def get_heat_frame_v3(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
+    def get_heat_frame_fo(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
       '''
       full observability
       
@@ -181,7 +181,7 @@ class HeatFrameGenerator:
       temp = -def_temp * (heat_value - 1)
       return temp
     
-    def get_rgb_v2(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
+    def get_rgb_po(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
       """
       Partial observability.
 
@@ -260,7 +260,7 @@ class HeatFrameGenerator:
 
 
 
-    def get_rgb_v3(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
+    def get_rgb_fo(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
         """
         full observability.
         
@@ -469,17 +469,17 @@ def get_frame_pil(states, config, heat_gen, curr_traj_count: int = 0):
         elif heat_opt == 1:
             img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
         elif heat_opt == 2:
-            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v2(
+            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_po(
                 np.array(img_array), config, heat=hot,
                 alpha_in=config.alpha_in, alpha_out=config.alpha_out,
             )
-            img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
+            img_array = heat_gen.get_rgb_po(copy.deepcopy(img_array), config, heat=hot)
         elif heat_opt == 3:
-            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v3(
+            img_heat_array, vehicle_temp = heat_gen.get_heat_frame_fo(
                 np.array(img_array), config, heat=hot,
                 alpha_in=config.alpha_in, alpha_out=config.alpha_out,
             )
-            img_array = heat_gen.get_rgb_v3(
+            img_array = heat_gen.get_rgb_fo(
                 copy.deepcopy(img_array), config, heat=hot,
                 alpha_in=config.alpha_in, alpha_out=config.alpha_out,
             )
@@ -584,11 +584,11 @@ def get_frame(states, config, heat_gen, curr_traj_count=0):
     elif heat_opt == 1:
       img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
     elif heat_opt == 2:
-      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v2(copy.deepcopy(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
-      img_array = heat_gen.get_rgb_v2(copy.deepcopy(img_array), config, heat=hot)
+      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_po(copy.deepcopy(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_array = heat_gen.get_rgb_po(copy.deepcopy(img_array), config, heat=hot)
     elif heat_opt == 3:
-      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_v3(np.array(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
-      img_array = heat_gen.get_rgb_v3(copy.deepcopy(img_array), config, heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_fo(np.array(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_array = heat_gen.get_rgb_fo(copy.deepcopy(img_array), config, heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
     else:
       raise ValueError("Invalid heat_mode")
       

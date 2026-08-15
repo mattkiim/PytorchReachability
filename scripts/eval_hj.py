@@ -181,15 +181,15 @@ def make_cache(config, vels, heat_values):
                     if config.include_no_heat_vis:
                         no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif config.heat_mode == 2:
-                    img = gen.get_rgb_v2(img, config, heat=True)
-                    heat, _ = gen.get_heat_frame_v2(img, config, heat=True, heat_value=heat_value)
+                    img = gen.get_rgb_po(img, config, heat=True)
+                    heat, _ = gen.get_heat_frame_po(img, config, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v2(img, config, heat=False, heat_value=heat_value)
+                        no_heat, _ = gen.get_heat_frame_po(img, config, heat=False, heat_value=heat_value)
                 elif config.heat_mode == 3:
-                    img = gen.get_rgb_v3(img, config, heat=True, heat_value=heat_value)
-                    heat, _ = gen.get_heat_frame_v3(img, config, heat=True, heat_value=heat_value)
+                    img = gen.get_rgb_fo(img, config, heat=True, heat_value=heat_value)
+                    heat, _ = gen.get_heat_frame_fo(img, config, heat=True, heat_value=heat_value)
                     if config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v3(img, heat=False, heat_value=heat_value)
+                        no_heat, _ = gen.get_heat_frame_fo(img, heat=False, heat_value=heat_value)
                 else:
                     raise ValueError(f"Unknown heat_mode: {config.heat_mode}")
 
@@ -279,11 +279,11 @@ def _render_seq(cfg, xs, hs, use_no_heat=False):
         gen._compute_geometry(img_og.shape)
 
         if cfg.heat_mode == 3:
-            img = gen.get_rgb_v3(img_og, cfg, heat=True, heat_value=h)
-            himg, _ = gen.get_heat_frame_v3(img_og, cfg, heat=not use_no_heat, heat_value=h)
+            img = gen.get_rgb_fo(img_og, cfg, heat=True, heat_value=h)
+            himg, _ = gen.get_heat_frame_fo(img_og, cfg, heat=not use_no_heat, heat_value=h)
         elif cfg.heat_mode == 2:
-            img = gen.get_rgb_v2(img_og, cfg, heat=True)
-            himg, _ = gen.get_heat_frame_v2(img_og, cfg, heat=not use_no_heat, heat_value=h)
+            img = gen.get_rgb_po(img_og, cfg, heat=True)
+            himg, _ = gen.get_heat_frame_po(img_og, cfg, heat=not use_no_heat, heat_value=h)
         elif cfg.heat_mode == 1:
             img = img_og
             himg = gen.get_heat_frame_v1(img_og, heat=not use_no_heat)
@@ -357,11 +357,11 @@ def dreamer_posterior_obsstep(cfg, wm, x0, heat0, K=5, use_no_heat=False):
         gen._compute_geometry(img_og.shape)
         # produce RGB + heat planes matching your training setup
         if cfg.heat_mode == 3:
-            rgb = gen.get_rgb_v3(img_og, cfg, heat=True, heat_value=h)
-            heat_img, _ = gen.get_heat_frame_v3(img_og, cfg, heat=(not use_no_heat), heat_value=h)
+            rgb = gen.get_rgb_fo(img_og, cfg, heat=True, heat_value=h)
+            heat_img, _ = gen.get_heat_frame_fo(img_og, cfg, heat=(not use_no_heat), heat_value=h)
         elif cfg.heat_mode == 2:
-            rgb = gen.get_rgb_v2(img_og, cfg, heat=True)
-            heat_img, _ = gen.get_heat_frame_v2(img_og, cfg, heat=(not use_no_heat), heat_value=h)
+            rgb = gen.get_rgb_po(img_og, cfg, heat=True)
+            heat_img, _ = gen.get_heat_frame_po(img_og, cfg, heat=(not use_no_heat), heat_value=h)
         elif cfg.heat_mode == 1:
             rgb = img_og
             heat_img = gen.get_heat_frame_v1(img_og, heat=(not use_no_heat))
@@ -753,11 +753,11 @@ def single_rollout(config, wm, policy, initial_conditions, T=100, target=None):
             gen._compute_geometry(img_og.shape)
 
             if config.heat_mode == 3:
-                img = gen.get_rgb_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
-                heat, _ = gen.get_heat_frame_v3(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                img = gen.get_rgb_fo(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                heat, _ = gen.get_heat_frame_fo(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 2:
-                img = gen.get_rgb_v2(img_og, config, heat=True)
-                heat, _ = gen.get_heat_frame_v2(img_og, config, heat=True, heat_value=vehicle_heat.item())
+                img = gen.get_rgb_po(img_og, config, heat=True)
+                heat, _ = gen.get_heat_frame_po(img_og, config, heat=True, heat_value=vehicle_heat.item())
             elif config.heat_mode == 1:
                 img = img_og
                 heat = gen.get_heat_frame_v1(img_og, heat=True)

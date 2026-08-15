@@ -453,17 +453,17 @@ class Dreamer(nn.Module):
                     heat = gen.get_heat_frame_v1(img, heat=True)
                     no_heat = gen.get_heat_frame_v1(img, heat=False)
                 elif self._config.heat_mode == 2:
-                    rgb = gen.get_rgb_v2(img, self._config, heat=True, heat_value=heat_val)
-                    heat, _ = gen.get_heat_frame_v2(rgb, self._config, heat=True, heat_value=heat_val)
+                    rgb = gen.get_rgb_po(img, self._config, heat=True, heat_value=heat_val)
+                    heat, _ = gen.get_heat_frame_po(rgb, self._config, heat=True, heat_value=heat_val)
                     no_heat = None
                     if self._config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v2(rgb, self._config, heat=False, heat_value=heat_val)
+                        no_heat, _ = gen.get_heat_frame_po(rgb, self._config, heat=False, heat_value=heat_val)
                 elif self._config.heat_mode == 3:
-                    rgb = gen.get_rgb_v3(img, self._config, heat=True, heat_value=heat_val)
-                    heat, _ = gen.get_heat_frame_v3(rgb, self._config, heat=True, heat_value=heat_val)
+                    rgb = gen.get_rgb_fo(img, self._config, heat=True, heat_value=heat_val)
+                    heat, _ = gen.get_heat_frame_fo(rgb, self._config, heat=True, heat_value=heat_val)
                     no_heat = None
                     if self._config.include_no_heat_vis:
-                        no_heat, _ = gen.get_heat_frame_v3(rgb, heat=False, heat_value=heat_val)
+                        no_heat, _ = gen.get_heat_frame_fo(rgb, heat=False, heat_value=heat_val)
                 else:
                     raise ValueError("Invalid heat_mode")
 
