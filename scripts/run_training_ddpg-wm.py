@@ -159,7 +159,7 @@ offline_eps = collections.OrderedDict()
 config.batch_size = 1
 config.batch_length = 5
 
-config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
+config.dataset_path = f"{config.dataset_path}_{config.heat_rate}.pkl"
 tools.fill_expert_dataset_dubins(config, offline_eps)
 offline_dataset = make_dataset(offline_eps, config)
 
@@ -430,7 +430,7 @@ def make_cache(config, vels, heat_values):
                 states,
             ]
             
-    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+    cache_path = f"{config.hj_cache_path}_{config.heat_rate}.pkl"
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             
     with open(cache_path, 'wb') as f:
@@ -438,7 +438,7 @@ def make_cache(config, vels, heat_values):
     return cache
 
 def load_cache(config):
-    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+    cache_path = f"{config.hj_cache_path}_{config.heat_rate}.pkl"
 
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"Cache file not found at: {cache_path}")
@@ -591,8 +591,8 @@ def rollout_dubins(
 
                 heat_vals = torch.where(
                     inside_obs,
-                    heat_vals + config.alpha_in  / (255 / 1.1), # TODO: add vehicle_heat to config
-                    heat_vals - config.alpha_out / (255 / 1.1)
+                    heat_vals + config.heat_rate  / (255 / 1.1), # TODO: add vehicle_heat to config
+                    heat_vals - config.cool_rate / (255 / 1.1)
                 )
                 heat_vals = torch.clamp(heat_vals, min=0.0, max=1.0)
 
@@ -738,9 +738,9 @@ def single_rollout(initial_conditions, config, T=100, target=None):
             inside_obs = np.any(vehicle_mask & obstacle_mask)
 
             if inside_obs:
-                vehicle_heat += config.alpha_in / (255 / 1.1)
+                vehicle_heat += config.heat_rate / (255 / 1.1)
             else:
-                vehicle_heat -= config.alpha_out / (255 / 1.1)
+                vehicle_heat -= config.cool_rate / (255 / 1.1)
             vehicle_heat = torch.clamp(vehicle_heat, 0.0, 1.0)
 
         trajectories_rgb_obs.append(traj_rgb)
@@ -1012,7 +1012,7 @@ heat_values = [0.2, 0.4, 0.6, 0.8] # TODO: stick this in config, and generate gr
 # thetas = [3 * np.pi / 2, 0]
 vels = [0, 0.5, 1.0]
 
-cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+cache_path = f"{config.hj_cache_path}_{config.heat_rate}.pkl"
 
 if not os.path.exists(cache_path):
     cache = make_cache(config, vels, heat_values)

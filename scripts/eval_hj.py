@@ -214,14 +214,14 @@ def make_cache(config, vels, heat_values):
                 states,
             ]
 
-    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+    cache_path = f"{config.hj_cache_path}_{config.heat_rate}.pkl"
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     with open(cache_path, 'wb') as f:
         pickle.dump(cache, f)
     return cache
 
 def load_cache(config, allow_make=False, vels=None, heat_values=None):
-    cache_path = f"{config.hj_cache_path}_{config.alpha_in}.pkl"
+    cache_path = f"{config.hj_cache_path}_{config.heat_rate}.pkl"
     if not os.path.exists(cache_path):
         if allow_make:
             print(f"[cache] not found, creating at {cache_path}")
@@ -255,9 +255,9 @@ def _backstep_state(cfg, xythetav):
 def _backstep_heat(cfg, h_t, x_prev, y_prev):
     S = 255.0 / 1.1
     if _inside_obs_xy(cfg, x_prev, y_prev):
-        h_prev = h_t - (cfg.alpha_in / S)
+        h_prev = h_t - (cfg.heat_rate / S)
     else:
-        h_prev = h_t + (cfg.alpha_out / S)
+        h_prev = h_t + (cfg.cool_rate / S)
     return float(np.clip(h_prev, 0.0, 1.0))
 
 def _build_backward_history(cfg, x0, heat0, K):
@@ -326,9 +326,9 @@ def dreamer_posterior_obsstep(cfg, wm, x0, heat0, K=5, use_no_heat=False):
     S = (255.0 / 1.1)
     def backstep_heat(h_t, x_prev, y_prev):
         if inside_obs_xy(x_prev, y_prev):
-            h_prev = h_t - (cfg.alpha_in / S)
+            h_prev = h_t - (cfg.heat_rate / S)
         else:
-            h_prev = h_t + (cfg.alpha_out / S)
+            h_prev = h_t + (cfg.cool_rate / S)
         return float(np.clip(h_prev, 0.0, 1.0))
 
     # ---------- build backward history (x_0, h_0), (x_-1, h_-1), ..., (x_-K, h_-K) ----------
@@ -495,8 +495,8 @@ def rollout_from_posts(cfg, wm, policy, posts, feats, states_xythv, heats0, T=10
                 inside_obs = dist < cfg.obs_r
                 heat_vals = torch.where(
                     inside_obs,
-                    heat_vals + cfg.alpha_in  / (255/1.1),
-                    heat_vals - cfg.alpha_out / (255/1.1),
+                    heat_vals + cfg.heat_rate  / (255/1.1),
+                    heat_vals - cfg.cool_rate / (255/1.1),
                 )
                 heat_vals = torch.clamp(heat_vals, 0.0, 1.0)
                 failure  |= heat_vals >= (cfg.heat_threshold - 1e-6)
@@ -690,8 +690,8 @@ def rollout_dubins(config, wm, policy, lz, feat, post, states, heat_value_init, 
                 inside = dist < config.obs_r
                 heat_vals = torch.where(
                     inside,
-                    heat_vals + config.alpha_in / (255 / 1.1),
-                    heat_vals - config.alpha_out / (255 / 1.1)
+                    heat_vals + config.heat_rate / (255 / 1.1),
+                    heat_vals - config.cool_rate / (255 / 1.1)
                 ).clamp_(0.0, 1.0)
                 failure |= heat_vals >= (config.heat_threshold - EPS)
 
@@ -819,9 +819,9 @@ def single_rollout(config, wm, policy, initial_conditions, T=100, target=None):
                             (img_og[..., 1:2] < 100))
             inside_obs = np.any(vehicle_mask & obstacle_mask)
             if inside_obs:
-                vehicle_heat += config.alpha_in / (255 / 1.1)
+                vehicle_heat += config.heat_rate / (255 / 1.1)
             else:
-                vehicle_heat -= config.alpha_out / (255 / 1.1)
+                vehicle_heat -= config.cool_rate / (255 / 1.1)
             vehicle_heat = torch.clamp(vehicle_heat, 0.0, 1.0)
 
         trajectories_rgb_obs.append(traj_rgb)
@@ -1019,7 +1019,7 @@ def main():
     # --- Env / WM bootstrap ---------------------------------------------------
     env = gymnasium.make(args.task, params=[args])
     args.num_actions = env.action_space.shape[0] if hasattr(env.action_space, "shape") else env.action_space.n
-    args.dataset_path = f"{args.dataset_path}_{args.alpha_in}.pkl"
+    args.dataset_path = f"{args.dataset_path}_{args.heat_rate}.pkl"
 
     if args.multimodal:
         env.observation_space_full['image'] = gymnasium.spaces.Box(low=0, high=255, shape=(128, 128, 3), dtype=np.uint8)

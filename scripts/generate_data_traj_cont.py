@@ -107,24 +107,24 @@ class HeatFrameGenerator:
 
         return heat_frame
     
-    def get_heat_frame_po(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None):
+    def get_heat_frame_po(self, img_array, config, heat=True, heat_rate=3, cool_rate=5, heat_value=None):
         '''
         partial observability
         
         if you spend too long in unsafe, become different color when exiting (RGB)
         the heat map should be the same as v3
         '''
-        return self.get_heat_frame_fo(img_array, config, heat=heat, alpha_in=alpha_in, alpha_out=alpha_out, heat_value=heat_value)
+        return self.get_heat_frame_fo(img_array, config, heat=heat, heat_rate=heat_rate, cool_rate=cool_rate, heat_value=heat_value)
 
-    def get_heat_frame_fo(self, img_array, config, heat=True, alpha_in=3, alpha_out=5, heat_value=None): 
+    def get_heat_frame_fo(self, img_array, config, heat=True, heat_rate=3, cool_rate=5, heat_value=None): 
       '''
       full observability
       
       The vehicle becomes darker (lower value) the longer it is inside the obstacle region.
       When it exits the region, it gradually cools down (brightness increases).
       
-      alpha_in: how quickly heat accumulates inside the region
-      alpha_out: how quickly it fades outside
+      heat_rate: how quickly heat accumulates inside the region
+      cool_rate: how quickly it fades outside
       '''
       self._compute_geometry(img_array.shape)
       obstacle = img_array[..., 2:3].copy()
@@ -150,11 +150,11 @@ class HeatFrameGenerator:
             # Update temperature
             if np.any(outside_mask) and not np.any(inside_mask):
                 # All vehicle pixels are outside
-                self.vehicle_temp = min(DEFAULT_VEHICLE_TEMP, self.vehicle_temp + alpha_out)
+                self.vehicle_temp = min(DEFAULT_VEHICLE_TEMP, self.vehicle_temp + cool_rate)
                 # pass
             elif np.any(inside_mask):
                 # Some or all vehicle pixels are inside
-                self.vehicle_temp = max(0, self.vehicle_temp - alpha_in)
+                self.vehicle_temp = max(0, self.vehicle_temp - heat_rate)
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_VEHICLE_TEMP)
@@ -178,11 +178,11 @@ class HeatFrameGenerator:
         
       return heat_frame, self.vehicle_temp
     
-    def heat_to_temp(self, heat_value, def_temp, alpha_in=3):
+    def heat_to_temp(self, heat_value, def_temp, heat_rate=3):
       temp = -def_temp * (heat_value - 1)
       return temp
     
-    def get_rgb_po(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
+    def get_rgb_po(self, img_array, config, heat=True, heat_rate=10, cool_rate=20, heat_value=None):
       """
       Partial observability.
 
@@ -227,10 +227,10 @@ class HeatFrameGenerator:
               rgb_out[outside_mask] = light_blue
                   
           if not np.any(inside_mask):
-            # self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + alpha_out * 1.2)
+            # self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + cool_rate * 1.2)
             pass
           else:
-              self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - alpha_in * 1.2)
+              self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - heat_rate * 1.2)
           
         else:
           temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
@@ -264,15 +264,15 @@ class HeatFrameGenerator:
 
 
 
-    def get_rgb_fo(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
+    def get_rgb_fo(self, img_array, config, heat=True, heat_rate=10, cool_rate=20, heat_value=None):
         """
         full observability.
         
         Tint the vehicle in the blue channel only.
 
         vehicle_mask : pixels whose *blue* value is near-zero are considered “vehicle”.
-        Heat builds (alpha_in) while they sit inside obstacle_mask
-        and cools (alpha_out) when they leave.
+        Heat builds (heat_rate) while they sit inside obstacle_mask
+        and cools (cool_rate) when they leave.
         """        
         self._compute_geometry(img_array.shape)
         obstacle_mask = self._get_mask()
@@ -311,10 +311,10 @@ class HeatFrameGenerator:
             rgb_out[outside_mask] = light_blue
                     
             if not np.any(inside_mask):
-              self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + alpha_out * 1.2)
+              self.vehicle_temp_rgb = min(DEFAULT_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb + cool_rate * 1.2)
               # pass
             else:
-                self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - alpha_in * 1.2)
+                self.vehicle_temp_rgb = max(MIN_RGB_VEHICLE_TEMP, self.vehicle_temp_rgb - heat_rate * 1.2)
             
           else:
             temp = self.heat_to_temp(heat_value, DEFAULT_RGB_VEHICLE_TEMP)
@@ -475,17 +475,17 @@ def get_frame_pil(states, config, heat_gen, curr_traj_count: int = 0):
         elif heat_opt == 2:
             img_heat_array, vehicle_temp = heat_gen.get_heat_frame_po(
                 np.array(img_array), config, heat=hot,
-                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+                heat_rate=config.heat_rate, cool_rate=config.cool_rate,
             )
             img_array = heat_gen.get_rgb_po(copy.deepcopy(img_array), config, heat=hot)
         elif heat_opt == 3:
             img_heat_array, vehicle_temp = heat_gen.get_heat_frame_fo(
                 np.array(img_array), config, heat=hot,
-                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+                heat_rate=config.heat_rate, cool_rate=config.cool_rate,
             )
             img_array = heat_gen.get_rgb_fo(
                 copy.deepcopy(img_array), config, heat=hot,
-                alpha_in=config.alpha_in, alpha_out=config.alpha_out,
+                heat_rate=config.heat_rate, cool_rate=config.cool_rate,
             )
         else:
             raise ValueError("Invalid heat_mode")
@@ -588,11 +588,11 @@ def get_frame(states, config, heat_gen, curr_traj_count=0):
     elif heat_opt == 1:
       img_heat_array = heat_gen.get_heat_frame_v1(copy.deepcopy(img_array), heat=hot)
     elif heat_opt == 2:
-      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_po(copy.deepcopy(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_po(copy.deepcopy(img_array), heat=hot, heat_rate=config.heat_rate, cool_rate=config.cool_rate)
       img_array = heat_gen.get_rgb_po(copy.deepcopy(img_array), config, heat=hot)
     elif heat_opt == 3:
-      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_fo(np.array(img_array), heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
-      img_array = heat_gen.get_rgb_fo(copy.deepcopy(img_array), config, heat=hot, alpha_in=config.alpha_in, alpha_out=config.alpha_out)
+      img_heat_array, vehicle_temp = heat_gen.get_heat_frame_fo(np.array(img_array), heat=hot, heat_rate=config.heat_rate, cool_rate=config.cool_rate)
+      img_array = heat_gen.get_rgb_fo(copy.deepcopy(img_array), config, heat=hot, heat_rate=config.heat_rate, cool_rate=config.cool_rate)
     else:
       raise ValueError("Invalid heat_mode")
       
@@ -754,7 +754,7 @@ def generate_trajs(config):
     curr_traj_count += 1
 
   if config.multimodal:
-    with open(f"{config.dataset_path}_{config.alpha_in}" + ".pkl", 'wb') as f: # TODO: read from config
+    with open(f"{config.dataset_path}_{config.heat_rate}" + ".pkl", 'wb') as f: # TODO: read from config
       pickle.dump(demos, f)
   else:
     with open('wm_demos' + str(config.size[0]) + '.pkl', 'wb') as f:

@@ -70,7 +70,7 @@ class Dreamer(nn.Module):
         self._make_pretrain_opt()
         
         if self._config.fill_cache:
-            cache_path = f"{self._config.wm_cache_path}_{self._config.alpha_in}.pkl"
+            cache_path = f"{self._config.wm_cache_path}_{self._config.heat_rate}.pkl"
             if os.path.exists(cache_path):
                 self.load_cache() 
             else:
@@ -367,7 +367,7 @@ class Dreamer(nn.Module):
     
     def load_cache(self):
         cache_path = self._config.wm_cache_path
-        cache_path = f"{cache_path}_{self._config.alpha_in}.pkl"
+        cache_path = f"{cache_path}_{self._config.heat_rate}.pkl"
 
         if not os.path.exists(cache_path):
             print(f"No cache file found at {cache_path}")
@@ -488,7 +488,7 @@ class Dreamer(nn.Module):
         self.no_heat_imgs = all_no_heat_imgs
 
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        cache_file = f"{cache_path}_{self._config.alpha_in}.pkl"
+        cache_file = f"{cache_path}_{self._config.heat_rate}.pkl"
         with open(cache_file, "wb") as f:
             pickle.dump({
                 "idxs": idxs,
@@ -741,7 +741,7 @@ def main(config):
     expert_eps = collections.OrderedDict()
     print("Expert Eps", expert_eps)
     
-    config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
+    config.dataset_path = f"{config.dataset_path}_{config.heat_rate}.pkl"
     tools.fill_expert_dataset_dubins(config, expert_eps)
     expert_dataset = make_dataset(expert_eps, config)
     

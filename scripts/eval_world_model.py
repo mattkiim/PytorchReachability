@@ -587,7 +587,7 @@ def main(config, ckpt_path=None, eval_batches=None):
 
     # ------------- Load dataset -------------
     expert_val_eps = collections.OrderedDict()
-    config.dataset_path = f"{config.dataset_path}_{config.alpha_in}.pkl"
+    config.dataset_path = f"{config.dataset_path}_{config.heat_rate}.pkl"
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_val_eps, config)
 

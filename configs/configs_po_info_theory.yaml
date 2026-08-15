@@ -177,8 +177,8 @@ defaults:
   obs_priv_heat: False
   include_no_heat_vis: False
 
-  alpha_in: 6
-  alpha_out: 10
+  heat_rate: 6
+  cool_rate: 10
   use_pil: True
   include_outline: False
   test: False
