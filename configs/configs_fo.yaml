@@ -17,14 +17,14 @@ defaults:
   num_trajs: 4000 ## 4000 in paper
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/wm_demos128_multimodal_v3_pil' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/cache_v3_pil'
-  hj_cache_path: 'cache/hj/cache_v3_pil'
+  dataset_path: 'train_data/fo'
+  wm_cache_path: 'cache/wm/fo'
+  hj_cache_path: 'cache/hj/fo'
   ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
-  logdir: 'logs/dreamer_dubins_multimodal_v3_pil'
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v3_pil/rssm_ckpt.pt 
+  logdir: 'logs/fo'
+  rssm_ckpt_path: logs/fo/rssm_ckpt.pt
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -37,7 +37,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:0' # TODO: softcode value
+  device: 'cuda:0'  # override with --device cuda:N
   compile: True
   precision: 32
   debug: False

@@ -17,14 +17,14 @@ defaults:
   num_trajs: 4000 ## 4000 in paper
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/wm_demos128_multimodal_v2plus3' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/cache_v2plus3_no_heat.pkl'
-  hj_cache_path: 'cache/hj/cache_v2plus3_no_heat.pkl'
+  dataset_path: 'train_data/po_no_heat'
+  wm_cache_path: 'cache/wm/po_no_heat.pkl'
+  hj_cache_path: 'cache/hj/po_no_heat.pkl'
   ground_truth_path: 'gt_dubins/value_function_theta_v_heat_slices'
   
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv2-torch
-  logdir: 'logs/dreamer_dubins_multimodal_v2plus3_no_heat'
-  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v2plus3_no_heat/rssm_ckpt.pt 
+  logdir: 'logs/po_no_heat'
+  rssm_ckpt_path: logs/po_no_heat/rssm_ckpt.pt
 
   no_heat: True
 
@@ -40,7 +40,7 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0'  # override with --device cuda:N
   compile: True
   precision: 32
   debug: False

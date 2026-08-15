@@ -74,7 +74,7 @@ Produces safety visualizations and metrics over the state space.
 Quantifies how much safety-relevant information is encoded in the latent state:
 
 ```bash
-python scripts/eval.py --config_path configs/configs_po_info_theory.yaml
+python scripts/eval_world_model.py --config_path configs/configs_po_info_theory.yaml
 python scripts/dreamer_info_theory.py
 ```
 
@@ -133,7 +133,7 @@ scripts/
   dreamer_offline.py                world model training
   run_training_ddpg-wm.py           latent safety filter training
   eval_hj.py                        safety filter evaluation
-  eval.py                           world model / MI diagnostic evaluation
+  eval_world_model.py               world model / MI diagnostic evaluation
   eval_boundary.py                  boundary evaluation for prediction gap analysis
   dreamer_info_theory.py            mutual information computation
   run_training_sac_RA_nodist.py     vanilla reachability (no world model)
