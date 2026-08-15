@@ -324,7 +324,6 @@ def stop_fn(mean_rewards):
 
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
-    # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
 for iter in range(args.total_episodes):

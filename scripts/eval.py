@@ -348,7 +348,6 @@ class Dreamer(nn.Module):
 
         # Ground-truth (unsafe=1)
         gt = data["failure"][:, t0 + WARM + 1 : t0 + WARM + 1 + FUT]
-        # print(gt.shape); quit()
         gt_unsafe = (gt > 0.5)
         
         # Confusion counts
@@ -541,7 +540,6 @@ def main(config, ckpt_path=None, eval_batches=None):
         np.float32(midpoint - interval/2),
         np.float32(midpoint + interval/2),
     )
-    # print(f"[dreamer_offline/main]: {gt_observation_space}")
     action_space = gym.spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
     image_size = config.size[0] # 128
     
@@ -593,7 +591,6 @@ def main(config, ckpt_path=None, eval_batches=None):
     tools.fill_expert_dataset_dubins(config, expert_val_eps, is_val_set=True)
     eval_dataset = make_dataset(expert_val_eps, config)
 
-    # print("Length of training data:", len(expert_eps))
     print("Length of validation data:", len(expert_val_eps))
 
     # ------------- Build agent (no training) -------------
@@ -626,7 +623,6 @@ def main(config, ckpt_path=None, eval_batches=None):
     # recon_mean, total_mean = agent.evaluate_full_metrics(
     #     eval_dataset, batches=getattr(config, "eval_batches", 10), prefix="loaded"
     # )
-    # print(f"Initial eval after load — recon_mean: {recon_mean:.4f}, total_mean: {total_mean:.4f}")
 
 
     # Optims are irrelevant for eval
@@ -643,7 +639,6 @@ def main(config, ckpt_path=None, eval_batches=None):
     #             logger.video("eval_recon/openl_agent", to_np(video_pred))
     #         logger.write(step=logger.step)
     #     except Exception as e:
-    #         print("[Warning] video_pred failed:", e)
 
     # ------------- Eval: probe MLP & full metrics -------------
     def log_plot(title, data):
@@ -708,8 +703,6 @@ def main(config, ckpt_path=None, eval_batches=None):
     # logger.scalar("hybrid16_closed/frac_unsafe_imag", float(res_close["frac_unsafe_imag"]))
     
     # # Also print a short console summary
-    # print("Hybrid16 (open):", res_open)
-    # print("Hybrid16 (closed):", res_close)
     
     # ------------- Eval: OL and CL safety confusion (imagined horizon only) -------------
     n_windows = 50  # number of windows you want to evaluate
@@ -724,13 +717,9 @@ def main(config, ckpt_path=None, eval_batches=None):
     #     shared_batches, mode="closed", log_prefix="conf/closed", fpr_over_total=True
     # )
 
-    # print("\n=== Confusion (Open, same samples) ===")
     # for k, v in open_stats.items():
-    #     print(f"{k}: {v}")
 
-    # print("\n=== Confusion (Closed, same samples) ===")
     # for k, v in closed_stats.items():
-    #     print(f"{k}: {v}")
         
     
     latent_state_test = agent.latent_state_test(shared_batches, warm=5)

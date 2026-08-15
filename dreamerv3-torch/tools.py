@@ -261,7 +261,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
                 heat_failure = heat
             elif config.heat_mode == 2 or config.heat_mode == 3:
                 heat_failure = heat > config.heat_threshold - 1e-6
-            # print(f"[tools/fill_expert_dataset_dubins] heat check: {heat}"); quit()
 
             transition["failure"] = vis_failure
             if "heat" in traj['obs']:
@@ -272,7 +271,6 @@ def fill_expert_dataset_dubins(config, cache, is_val_set=False):
             transition["is_last"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["is_terminal"] = np.array(traj["dones"][t], dtype=np.bool_)
             transition["discount"] = np.array(1, dtype=np.float32)
-            # print(traj["actions"][t]); quit()
             transition["action"] = np.array(traj["actions"][t], dtype=np.float32)
             add_to_cache(cache, f"exp_traj_{i}", transition)
             

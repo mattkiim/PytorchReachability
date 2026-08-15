@@ -179,7 +179,6 @@ class HeatFrameGenerator:
     
     def heat_to_temp(self, heat_value, def_temp, alpha_in=3):
       temp = -def_temp * (heat_value - 1)
-      # print(def_temp, heat_value, temp)
       return temp
     
     def get_rgb_v2(self, img_array, config, heat=True, alpha_in=10, alpha_out=20, heat_value=None):
@@ -235,7 +234,6 @@ class HeatFrameGenerator:
           
           if not np.any(inside_mask) and temp < DEFAULT_RGB_VEHICLE_TEMP:
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
-            # print(temp, temp_norm, heat_value)
             decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
             light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
             inside_mask = np.squeeze(inside_mask, axis=-1)
@@ -319,7 +317,6 @@ class HeatFrameGenerator:
             temp = np.clip(temp, MIN_RGB_VEHICLE_TEMP, DEFAULT_RGB_VEHICLE_TEMP)
             
             temp_norm = temp / DEFAULT_RGB_VEHICLE_TEMP
-            # print(temp, temp_norm, heat_value)
             decay_factor = temp_norm * 0.4  # decays from 0.4 → 0 as temp goes 0 → 255
             light_blue = np.array([temp * decay_factor, temp * decay_factor, temp])  # R, G, B
             inside_mask = np.squeeze(inside_mask, axis=-1)
@@ -675,7 +672,6 @@ def gen_one_traj_img(config, curr_traj_count=0):
   v_max = getattr(config, 'v_max', 1.0)
 
   heat = torch.rand(1).item()
-  # print(heat)
 
   heat_gen = HeatFrameGenerator(config)
   heat_gen.reset_vehicle_heat(heat=heat) # TODO: pass in heat
@@ -743,8 +739,6 @@ def generate_trajs(config):
   curr_traj_count = 0
   for i in range(config.num_trajs):
     state_obs, acs, state_gt, img_obs, heat_obs, heat_gt, dones = gen_one_traj_img(config, curr_traj_count=curr_traj_count)
-    # print(state_obs[0].shape)
-    # print(np.mean(img_obs), np.mean(heat_obs)); quit()
     demo = {}
     demo['obs'] = {'image': img_obs, 'heat': heat_obs, 'priv_heat': heat_gt, 'state': state_obs, 'priv_state': state_gt}
     demo['actions'] = acs

@@ -131,7 +131,6 @@ class RSSM(nn.Module):
         embed, action, is_first = swap(embed), swap(action), swap(is_first)
         # prev_state[0] means selecting posterior of return(posterior, prior) from obs_step
         
-        # print(f"[dreamerv3-torch/networks/observe]: action shape: {action.shape}")
         post, prior = tools.static_scan(
             lambda prev_state, prev_act, embed, is_first: self.obs_step(
                 prev_state[0], prev_act, embed, is_first
@@ -175,7 +174,6 @@ class RSSM(nn.Module):
         return dist
 
     def obs_step(self, prev_state, prev_action, embed, is_first, sample=True):
-        # print(f"[dreamerv3-torch/networks/obs_step] action shape: {prev_action.shape}")
         # initialize all prev_state
         if prev_state == None or torch.sum(is_first) == len(is_first):
             prev_state = self.initial(len(is_first))
@@ -195,9 +193,7 @@ class RSSM(nn.Module):
                 prev_state[key] = (
                     val * (1.0 - is_first_r) + init_state[key] * is_first_r
                 )
-            # print(prev_state, prev_action)
 
-        # print(f"[dreamerv3-torch/networks/obs_step] action shape: {prev_action.shape}")
         prior = self.img_step(prev_state, prev_action)
         x = torch.cat([prior["deter"], embed], -1)
         # (batch_size, prior_deter + embed) -> (batch_size, hidden)
@@ -219,7 +215,6 @@ class RSSM(nn.Module):
             # (batch, stoch, discrete_num) -> (batch, stoch * discrete_num)
             prev_stoch = prev_stoch.reshape(shape)
         # (batch, stoch * discrete_num) -> (batch, stoch * discrete_num + action)
-        # print(f"[dreamerv3-torch/networks/img_step] prev shapes: {prev_stoch.shape} {prev_action.shape}")
         x = torch.cat([prev_stoch, prev_action], -1)
         # (batch, stoch * discrete_num + action, embed) -> (batch, hidden)
         x = self._img_in_layers(x)
@@ -337,15 +332,10 @@ class MultiEncoder(nn.Module):
         else: 
             self.heat_cnn_shapes = None
         
-        # print(shapes)
-        # print("Encoder CNN shapes:", self.cnn_shapes)
-        # print("Encoder MLP shapes:", self.mlp_shapes)
-        # print("Heat CNN shapes:", self.heat_cnn_shapes); quit()
 
         self.outdim = 0
         if self.cnn_shapes:
             input_ch = sum([v[-1] for v in self.cnn_shapes.values()])
-            # print(f"[networks/MultiEncoder/init] CNN input channels: {input_ch}")
             input_shape = tuple(self.cnn_shapes.values())[0][:2] + (input_ch,)
             self._cnn = ConvEncoder(
                 input_shape, cnn_depth, act, norm, kernel_size, minres
@@ -354,7 +344,6 @@ class MultiEncoder(nn.Module):
             
         if self.mlp_shapes:
             input_size = sum([sum(v) for v in self.mlp_shapes.values()])
-            # print(input_size); quit()
             self._mlp = MLP(
                 input_size,
                 None,
@@ -369,7 +358,6 @@ class MultiEncoder(nn.Module):
         
         if self.heat_cnn_shapes:
             heat_input_ch = sum([v[-1] for v in self.heat_cnn_shapes.values()])
-            # print(f"[networks/MultiEncoder/init] MM-CNN input channels: {heat_input_ch}") # should be 1
             heat_input_shape = tuple(self.heat_cnn_shapes.values())[0][:2] + (heat_input_ch,)
             self._heat_cnn = ConvEncoder(
                 heat_input_shape, 
@@ -384,20 +372,13 @@ class MultiEncoder(nn.Module):
     def forward(self, obs):
         outputs = []
         if self.cnn_shapes:
-            # print()
-            # print(f"[networks/MultiEncoder/forward] cnn_shapes: {self.cnn_shapes}")
             inputs = torch.cat([obs[k] for k in self.cnn_shapes], -1)
-            # print(f"[networks/MultiEncoder/forward] inputs shape: {inputs.shape}")
-            # print(inputs.mean())
             outputs.append(self._cnn(inputs))
         if self.mlp_shapes:
             inputs = torch.cat([obs[k] for k in self.mlp_shapes], -1)
             outputs.append(self._mlp(inputs))
         if self.heat_cnn_shapes:
-            # print(f"[networks/MultiEncoder/forward] heat cnn shape: {self.heat_cnn_shapes}")
             inputs = torch.cat([obs[k] for k in self.heat_cnn_shapes], -1)
-            # print(f"[networks/MultiEncoder/forward]: input shape {inputs.shape}")
-            # print(inputs.mean()); quit()
             outputs.append(self._heat_cnn(inputs))
         outputs = torch.cat(outputs, -1)
         return outputs
@@ -443,8 +424,6 @@ class MultiDecoder(nn.Module):
         else:
             self.heat_cnn_shapes = None
             
-        # print("[networks/Decoder] CNN shapes:", self.cnn_shapes)
-        # print("[networks/Decoder] MLP shapes:", self.mlp_shapes)
         
         if self.cnn_shapes:
             some_shape = list(self.cnn_shapes.values())[0]
@@ -511,7 +490,6 @@ class MultiDecoder(nn.Module):
         if self.heat_cnn_shapes:
             feat = features
             outputs_heat = self._heat_cnn(feat)
-            # print(f"[networks/MultiDecoder/forward] outputs_heat shape: {outputs_heat.shape}")
             split_sizes = [v[-1] for v in self.heat_cnn_shapes.values()]
             outputs_heat = torch.split(outputs_heat, split_sizes, -1)
             dists.update(

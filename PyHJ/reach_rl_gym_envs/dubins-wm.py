@@ -68,7 +68,6 @@ class Dubins_WM_Env(gym.Env):
     def step(self, action):
         init = {k: v[:, -1] for k, v in self.latent.items()}
         # for k, v in init.items():
-        #     print(f"{k}: {v.shape}")
         # quit()
         action = np.clip(action, self.action_space.low, self.action_space.high)
         steer = action[0] * self.turnRate  # [-turnRate, +turnRate]
@@ -98,7 +97,6 @@ class Dubins_WM_Env(gym.Env):
         data = self.wm.preprocess(init_traj)
         embed = self.encoder(data)
         
-        # print(f"[PyHJ/reach_rl_gym_envs/dubins-wm/reset] action shape: {data["action"].shape}")
         self.latent, _ = self.wm.dynamics.observe(
             embed, data["action"], data["is_first"]
         )

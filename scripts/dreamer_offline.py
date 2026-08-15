@@ -39,7 +39,6 @@ from generate_data_traj_cont import get_frame_eval, get_frame_eval_pil, HeatFram
 
 class Dreamer(nn.Module):
     def __init__(self, obs_space, act_space, config, logger, dataset):
-        # print(f"[Dreamer]: {obs_space}, {act_space}"); quit()
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -213,7 +212,6 @@ class Dreamer(nn.Module):
                 logged = True
 
             if video_pred_log and self._should_log_video(self._step):
-                # print(f"[Dreamer/_maybe_log_metrics]: step: {self._step}")
                 video_pred, video_pred2 = self._wm.video_pred(next(self._dataset))
                 self._logger.video("train_openl_agent", to_np(video_pred))
                 self._logger.video("train_openl_hand", to_np(video_pred2))
@@ -227,7 +225,6 @@ class Dreamer(nn.Module):
         wm = self._wm
         actor = self._task_behavior.actor
         data = wm.preprocess(data)
-        # print(data['obs_state'].shape); quit()
         
         with tools.RequiresGrad(wm), tools.RequiresGrad(actor):
             with torch.amp.autocast("cuda", enabled=wm._use_amp):
@@ -296,13 +293,11 @@ class Dreamer(nn.Module):
                     # vis_failure_data = data["vis_failure"]
                     failure_data = data["failure"] # 1 for unsafe, 0 for safe
                     
-                    # print(vis_failure_data.shape, heat_failure_data.shape); quit()
                     safe_mask = failure_data == 0
                     unsafe_mask = ~safe_mask
 
                     safe_data = torch.where(safe_mask)
                     unsafe_data = torch.where(unsafe_mask)
-                    # print(unsafe_data); quit()
                     
                     safe_dataset = feat[safe_data]
                     unsafe_dataset = feat[unsafe_data]
@@ -347,7 +342,6 @@ class Dreamer(nn.Module):
         self._update_running_metrics(metrics)
         self._maybe_log_metrics()
         self._step += 1
-        # print(f"[Dreamer/pretrain_model_only]: step: {self._step}")
         self._logger.step = self._step
         
     def pretrain_regress_obs(self, data, obs_mlp, obs_opt, eval=False):
@@ -515,8 +509,6 @@ class Dreamer(nn.Module):
         imgs = np.expand_dims(imgs, 1)
         heat = heat if heat_bool else no_heat
         heat = np.expand_dims(heat, 1)
-        # print(f"[dreamer_offline/Dreamer/get_latent] heat: {heat.mean()}")
-        # print(imgs.shape); quit()
         batch_size = np.shape(thetas)[0]
         dummy_acs = np.zeros((batch_size, 1, 2)) 
         firsts = np.ones((batch_size, 1))
@@ -540,7 +532,6 @@ class Dreamer(nn.Module):
         embed = self._wm.encoder(data)
         
         # for k, v in data.items():
-        #     print(f"{k}: {v.shape}")
         # quit()
 
         post, prior = self._wm.dynamics.observe(
@@ -601,7 +592,6 @@ class Dreamer(nn.Module):
 
             for mode_idx, g_x in enumerate(g_x_list):
                 # Fill into (x, y, velocity) grid
-                # print(g_x.shape); quit()
                 self.v[self.idxs[:, 0], self.idxs[:, 1], self.idxs[:, 2]] = g_x
                 v = self.v  # shape (nx, ny, nv)
 
@@ -701,7 +691,6 @@ def main(config):
         np.float32(midpoint - interval/2),
         np.float32(midpoint + interval/2),
     )
-    # print(f"[dreamer_offline/main]: {gt_observation_space}")
     
     image_size = config.size[0] # 128
     
@@ -745,7 +734,6 @@ def main(config):
             'image': image_observation_space,
         })
 
-    # print(observation_space); quit()
         
     config.num_actions = action_space.n if hasattr(action_space, "n") else action_space.shape[0]
 
@@ -790,7 +778,6 @@ def main(config):
         agent._step = agent._logger.step // config.action_repeat
         agent._wm._step = agent._step
         print("Done loading")
-    # print(agent._wm._step); quit()
     
         try:
             print("Warming up model with one train batch to stabilize state...")
@@ -833,7 +820,6 @@ def main(config):
         log_plot("eval_recon_loss", eval_loss)
         logger.scalar("pretrain/train_recon_loss_min", np.min(train_loss))
         logger.scalar("pretrain/eval_recon_loss_min", np.min(eval_loss))
-        # print(logger.step); quit()
         logger.write(step=logger.step)
         del obs_mlp, obs_opt  # dont need to keep these
         return np.min(eval_loss)
@@ -903,7 +889,6 @@ def main(config):
 
                 logger.image("pretrain/lx_plot", np.transpose(lx_plot, (2, 0, 1)))
                 
-                # print(step)
                 best_pretrain_success = tools.save_checkpoint(
                     ckpt_name, step, success, best_pretrain_success, agent, logdir
                 )

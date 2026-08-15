@@ -34,7 +34,6 @@ class WorldModel(nn.Module):
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
-        # print(f"[models/WorldModel/init]: {shapes}"); quit()
         self.encoder = networks.MultiEncoder(
             shapes,
             config.multimodal,
@@ -171,7 +170,6 @@ class WorldModel(nn.Module):
         # image (batch_size, batch_length, h, w, ch)
         # reward (batch_size, batch_length)
         # discount (batch_size, batch_length)
-        # print(f"[models/WorldModel/_train] data: {data}"); quit()
         data = self.preprocess(data)
 
         with tools.RequiresGrad(self):
@@ -266,7 +264,6 @@ class WorldModel(nn.Module):
         recon_image = recon_output["image"].mode()
         if "heat" in recon_output.keys():
             recon_heat = recon_output["heat"].mode()
-            # print(recon_image.shape, recon_heat.shape)
             recon_image = torch.cat([recon_image, recon_heat], dim=-1)
         recon = recon_image
         
@@ -277,24 +274,17 @@ class WorldModel(nn.Module):
         openl_image = openl_output["image"].mode()
         if "heat" in openl_output.keys():
             openl_heat = openl_output["heat"].mode()
-            # print(openl_image.shape, openl_heat.shape); quit()
             openl_image = torch.cat([openl_image, openl_heat], dim=-1)
         openl = openl_image
             
         # reward_prior = self.heads["reward"](self.dynamics.get_feat(prior)).mode()
         # observed image is given until 5 steps
-        # print(f"[models/WorldModel/video_pred] recon shape: {recon.shape}")
-        # print(f"[models/WorldModel/video_pred] openl shape: {openl.shape}")
         model = torch.cat([recon[:, :5], openl], 1)
         truth = data["image"][:6]
         if "heat" in data.keys():
             truth_heat = data["heat"][:6]
-            # print(truth_heat.shape, truth.shape); quit()
             truth = torch.cat([truth, truth_heat], dim=-1)
-        # print(model.shape, truth.shape); quit() 
         error = (model - truth + 1.0) / 2.0
-        # print(error.mean())
-        # print(f"[models/WorldModel/video_pred] recon shape: {recon.shape}, {model.shape}")
         return torch.cat([truth, model, error], 2)
     
     def video_pred_multimodal(self, data):
@@ -302,7 +292,6 @@ class WorldModel(nn.Module):
         video_rgb = video[..., :3] # TODO: soft code
         video_heat = video[..., 3:] # TODO: soft code
         video_heat_3 = torch.cat([video_heat, video_heat, video_heat], dim=-1)
-        # print(video_rgb.shape, video_heat.shape, video.shape); quit()
         return video_rgb, video_heat_3
 
 

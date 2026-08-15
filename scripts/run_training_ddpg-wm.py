@@ -148,7 +148,6 @@ if config.multimodal:
     
 
 wm = models.WorldModel(env.observation_space_full, env.action_space, 0, config)
-# print(env.observation_space_full['image']); quit()
 
 ckpt_path = config.rssm_ckpt_path
 checkpoint = torch.load(ckpt_path, weights_only=True)
@@ -240,7 +239,6 @@ actor = Actor(
 actor_optim = torch.optim.AdamW(actor.parameters(), lr=args.actor_lr)
 actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=actor_optim, gamma=0.995)
 
-# print(env.action_space); quit()
 
 policy = DDPGPolicy(
 critic,
@@ -336,7 +334,6 @@ def fig_to_image(fig):
 
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
-    # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
 def make_cache(config, vels, heat_values):
@@ -849,7 +846,6 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
                 ax.scatter(xs, ys, s=3, marker='o', color=colors_rgba, linewidths=0)
                 
             # misclassified trajectories
-            # print(fp_trajs.shape, fn_trajs.shape); quit()
             for xs, ys in fp_trajs:
                 base_rgb   = mcolors.to_rgba('dodgerblue')
                 Tpts       = xs.shape[0]
@@ -957,7 +953,6 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
                 
             # ------------------------------------------------------------------ #
             initial_state = np.array([-0., 0., 0., 0., 0.])
-            # print(initial_state); quit()
             traj_rgb, traj_heat = single_rollout([initial_state], config, T=rollout_T)
 
             import imageio
@@ -1010,7 +1005,6 @@ def get_eval_plot(cache, vels, heat_values, rollout_T=100, boundary_eps=1e-3):
 
 if not os.path.exists(log_path+"/epoch_id_{}".format(epoch)):
     print("Just created the log directory!")
-    # print("log_path: ", log_path+"/epoch_id_{}".format(epoch))
     os.makedirs(log_path+"/epoch_id_{}".format(epoch))
 
 heat_values = [0.2, 0.4, 0.6, 0.8] # TODO: stick this in config, and generate ground truths in this script
