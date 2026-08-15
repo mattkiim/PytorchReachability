@@ -17,17 +17,14 @@ defaults:
   num_trajs: 4000 ## 4000 in paper
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/wm_demos128_multimodal_v3plus' # '128' should be the same as the size above
-  wm_cache_path: 'cache/wm/cache_v3plus.pkl'
-  hj_cache_path: 'cache/hj/cache_v3plus.pkl'
-  ground_truth_path: 'gt_dubins/value_function_theta_v_heat_slices'
+  dataset_path: 'train_data/wm_demos128_multimodal_v3_pil' # '128' should be the same as the size above
+  wm_cache_path: 'cache/wm/cache_v3_pil'
+  hj_cache_path: 'cache/hj/cache_v3_pil'
+  ground_truth_path: 'gt_dubins/value_function_theta_heat_slices'
   
-  # offline dreamer parameters, these are from https://github.com/NM512/dreamerv2-torch
-  logdir: '/data/mattkiim/dreamer_dubins_multimodal_v3plus'
-  rssm_ckpt_path: '/data/mattkiim/dreamer_dubins_multimodal_v3plus/rssm_ckpt.pt'
-
-  no_heat: False
-
+  # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
+  logdir: 'logs/dreamer_dubins_multimodal_v3_pil'
+  rssm_ckpt_path: logs/dreamer_dubins_multimodal_v3_pil/rssm_ckpt.pt 
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -40,13 +37,13 @@ defaults:
   eval_episode_num: 10
   log_every: 500
   reset_every: 0
-  device: 'cuda:1' # TODO: softcode value
+  device: 'cuda:0' # TODO: softcode value
   compile: True
   precision: 32
   debug: False
   video_pred_log: True
 
-  rssm_train_steps: 15001 ## 10000
+  rssm_train_steps: 30001 ## 10000
   
   # Environment
   task: 'dubins-wm'
@@ -138,7 +135,7 @@ defaults:
   tau: 0.005 # type=float, default=0.005)
   exploration-noise: 0.1 # type=float, default=0.1)
   epoch: 1 # type=int, default=10)
-  total-episodes: 15 # type=int, default=160)
+  total-episodes: 40 # type=int, default=160)
   step-per-epoch: 40000 # type=int, default=40000)
   step-per-collect: 8 # type=int, default=8)
   update-per-step: 0.125 # type=float, default=0.125)
@@ -165,20 +162,22 @@ defaults:
   kwargs: {} # type=str, default='{}')
   warm-start-path: null # type=str, default=None) # e.g., log/ra_droneracing_Game-v6/epoch_id_10/policy.pth
 
-  nx: 31
-  ny: 31
+  nx: 41
+  ny: 41
 
   multimodal: True
   aug_rssm: True
   heat_mode: 3
-  heat_prop: 0.0
-  heat_threshold: 0.8
+  heat_prop: 0.0 # 0.5
+  heat_threshold: 0.79
   fill_cache: True
-  obs_priv_heat: False
-  include_no_heat_vis: False
+  use_wandb: False
 
-  alpha_in: 6
-  alpha_out: 10
-  use_pil: True
-  include_outline: False
+  alpha_in: 8
+  alpha_out: 2
   test: False
+
+  include_no_heat_vis: False
+  obs_priv_heat: False # whether to use privileged heat in the observation state
+  use_pil: True
+  include_outline: True
