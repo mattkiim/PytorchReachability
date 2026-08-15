@@ -1,50 +1,154 @@
-# Reachability in Pytorch
+# How Well Do Latent World Models Understand Partially Observable Safety Constraints?
 
-This is a minimal repository for doing HJ reachability analysis using the Discounted Safety/Reach-avoid Bellman equation originally introduced in [this](https://ieeexplore.ieee.org/abstract/document/8794107) and [this](https://arxiv.org/abs/2112.12288) paper. We build on the implementation used as baselines from [Jingqi Li's Repo](https://github.com/jamesjingqili/Lipschitz_Continuous_Reachability_Learning). 
+**Paper:** [arXiv 2510.06492](https://arxiv.org/abs/2510.06492) — Matthew Kim, Kensuke Nakamura, Andrea Bajcsy (CoRL 2026)
 
+This repository contains the Dubins car simulation code used to study how partial observability degrades latent-space safe control. We identify two failure modes — **estimation gaps** (safety state is unobservable) and **prediction gaps** (failures can't be anticipated) — and demonstrate mitigations using multimodal privileged supervision and conformal risk calibration.
 
-This repository supports SAC and DDPG implementations of both the safety-only and reach-avoid value functions. I have not yet tested HJ with disturbances.
+---
 
+## Setup
 
-We recommend Python version 3.12. 
+Requires Python 3.12 and conda.
 
-Install instruction:
+```bash
+git clone https://github.com/mattkiim/PytorchReachability
+cd PytorchReachability
+pip install -e .
+conda install -c conda-forge ffmpeg
+```
 
-1. git clone the repo
+Dependencies: `torch==2.4.0`, `gymnasium==0.28.1`, `numpy==1.26.4`, `ruamel-yaml==0.17.40` (see `setup.py` for full list).
 
-2. cd to the root location of this repo, where you should be able to see the "setup.py". Note that if you use MacOS, then pytorch 2.4.0 is not available, and therefore you have to first change the line 22 of setup.py from "pytorch==2.4.0" to "pytorch==2.2.2", and then do the step 3. (However, Pytorch==2.4.0 is available for Ubuntu systems. So, if you use Ubuntu, then you can directly go to step 3. )
+---
 
-3. run in terminal: pip install -e .
+## Simulation Pipeline
 
-4. run in terminal: conda install -c conda-forge ffmpeg
+The Dubins car environment simulates a vehicle navigating around a circular obstacle. The vehicle accumulates "heat" (a safety-relevant quantity) while inside the unsafe region. Two observability conditions are studied:
 
+- **PO (partial observability):** heat is hidden from the RGB observation while the vehicle is inside the obstacle — an *estimation gap*
+- **FO (full observability):** heat is always visible in the observation — the upper-bound baseline
 
-# Some sample training scripts:
+The pipeline has four steps:
 
-## Vanilla Reachability
+### 1. Generate Data
 
-For a Dubins Car Reach-avoid example: 
-> python scripts/run_training_sac_RA_nodist.py --control-net 512 512 512 512 --critic-net 512 512 512 512 --epoch 1 --total-episodes 80
+```bash
+python scripts/generate_data_traj_cont.py --config_path configs/configs_po.yaml   # PO data
+python scripts/generate_data_traj_cont.py --config_path configs/configs_fo.yaml   # FO data
+```
 
-For a Dubins car avoid-only example: 
-> python scripts/run_training_sac_nodist.py --control-net 512 512 512 --critic-net 512 512 512 --epoch 1 --total-episodes 40
+This produces a `.pkl` dataset at the path specified by `dataset_path` in the config.
 
-## Latent Reachability
-To get the offline dataset for a Dubin's car model:
-> python scripts/generate_data_cont.py
+### 2. Train World Model
 
-World model training from the offline dataset
-> python scripts/dreamer_offline.py
+```bash
+python scripts/dreamer_offline.py --config_path configs/configs_po.yaml   # PO world model
+python scripts/dreamer_offline.py --config_path configs/configs_fo.yaml   # FO world model
+```
 
-Reachability analysis in the world model
-> python scriptsrun_training_ddpg-wm.py
+Trains a DreamerV3-style world model on the offline dataset. Checkpoints are saved to `logdir`.
 
+### 3. Train Safety Filter
 
-Finally, we recommend always setting the action space to range from -1 to 1 in the gym.env definition, but we can scale or shift the actions within the gym.step() function when defining the dynamics. For example, if we have two double integrator dynamics: the first integrator’s control is bounded by -0.1 to 0.1, and the second integrator’s control is bounded by -0.3 to 0.3. In this case, we can define self.action_space = spaces.Box(-1, 1, shape=(2,), dtype=np.float64) and implement the dynamics in gym.step(self, u) as follows:
+```bash
+python scripts/run_training_ddpg-wm.py --config_path configs/configs_po.yaml   # PO safety filter
+python scripts/run_training_ddpg-wm.py --config_path configs/configs_fo.yaml   # FO safety filter
+```
 
+Trains a least-restrictive safety filter (DDPG) in the world model's latent space.
 
-**A key thing to notice is that the initial state distribution should cover a portion of the target set for reach-avoid settings. Otherwise, no state in the target set shows up in the data buffer and therefore, the policy cannot see where it should go to maximize the value function. **
+### 4. Evaluate
 
-In addition, we remark that the convergence of critic loss implies that the neural network value function approximates well the value function induced by the current learned policy. However, it does not mean the learning is done because we cannot tell the quality of policies by just looking at the critic loss. In minimax DDPG, it improves the learned policy by minimizing the control actor loss, and refines the disturbance policy by maximizing the disturbance actor loss. However, we observe that a small critic loss stabilizes the multi-agent reinforcement learning training, and therefore helps policy learning. 
+```bash
+python scripts/eval_hj.py --config_path configs/configs_po.yaml   # main safety evaluation
+```
 
+Produces safety visualizations and metrics over the state space.
 
+---
+
+## Diagnostics
+
+### Mutual Information (Section 4, Table 1)
+
+Quantifies how much safety-relevant information is encoded in the latent state:
+
+```bash
+python scripts/eval.py --config_path configs/configs_po_info_theory.yaml
+python scripts/dreamer_info_theory.py
+```
+
+### Open-Loop Rollout Prediction (Section 4, Table 2)
+
+Evaluates whether the world model can predict downstream safety outcomes:
+
+```bash
+python scripts/eval_boundary.py --config_path configs/configs_po.yaml
+```
+
+---
+
+## Configs
+
+Each config corresponds to a specific experiment from the paper:
+
+| Config | Experiment |
+|---|---|
+| `configs_po.yaml` | PO main experiment (estimation gap) |
+| `configs_fo.yaml` | FO baseline (full observability) |
+| `configs_fo_priv_heat.yaml` | Privileged supervision mitigation (Section 5.1) |
+| `configs_po_no_heat.yaml` | Ablation: no heat channel in observation |
+| `configs_po_info_theory.yaml` | MI diagnostic (Section 4), smaller dataset |
+
+Key parameters to set per run:
+- `dataset_path` — path to generated trajectory data
+- `logdir` — where world model checkpoints are saved
+- `rssm_ckpt_path` — world model checkpoint used for safety filter training and eval
+- `device` — CUDA device (default `cuda:0`)
+
+---
+
+## Vanilla Reachability (No World Model)
+
+To run HJ reachability directly in state space (no world model, SAC-based):
+
+```bash
+python scripts/run_training_sac_RA_nodist.py \
+  --control-net 512 512 512 512 \
+  --critic-net 512 512 512 512 \
+  --epoch 1 --total-episodes 80
+```
+
+---
+
+## Repository Structure
+
+```
+configs/          experiment configs (one per paper experiment)
+dreamerv3-torch/  world model (DreamerV3 implementation)
+PyHJ/             reachability RL library and Dubins car environments
+scripts/
+  generate_data_traj_cont.py        data generation (main)
+  generate_data_traj_cont_boundary.py  data generation near safe set boundary
+  dreamer_offline.py                world model training
+  run_training_ddpg-wm.py           latent safety filter training
+  eval_hj.py                        safety filter evaluation
+  eval.py                           world model / MI diagnostic evaluation
+  eval_boundary.py                  boundary evaluation for prediction gap analysis
+  dreamer_info_theory.py            mutual information computation
+  run_training_sac_RA_nodist.py     vanilla reachability (no world model)
+  run_training_ddpg_franka-wm.py    hardware (Franka) deployment
+```
+
+---
+
+## Citation
+
+```bibtex
+@inproceedings{kim2026latent,
+  title={How Well Do Latent World Models Understand Partially Observable Safety Constraints?},
+  author={Kim, Matthew and Nakamura, Kensuke and Bajcsy, Andrea},
+  booktitle={Conference on Robot Learning (CoRL)},
+  year={2026}
+}
+```
