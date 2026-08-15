@@ -677,7 +677,6 @@ def gen_one_traj_img(config, curr_traj_count=0):
   heat = torch.rand(1).item()
   if config.test:
     heat = 1.0
-  print(heat)
 
   heat_gen = HeatFrameGenerator(config)
   heat_gen.reset_vehicle_heat(heat=heat) # TODO: pass in heat
