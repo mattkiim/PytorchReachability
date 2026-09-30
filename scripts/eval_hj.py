@@ -40,6 +40,7 @@ from PyHJ.utils.net.common import Net
 from PyHJ.utils.net.continuous import Actor, Critic
 from PyHJ.exploration import GaussianNoise
 from PyHJ.data import Batch
+from PyHJ.reach_rl_gym_envs.dubins_controls import policy_to_dynamics_action
 from PyHJ.policy import avoid_DDPGPolicy_annealing as DDPGPolicy
 from generate_data_traj_cont import (
     get_frame_eval,
@@ -69,7 +70,7 @@ def get_args():
     # eval options
     parser.add_argument("--model_path", type=str,
                         help="Path to saved DDPG policy .pth (the actor/critic policy file).",
-                        default="logs/dreamer_dubins_multimodal_v2plus3/PyHJ/0908/152442/PyHJ/dubins-wm/wm_actor_activation_ReLU_critic_activation_ReLU_game_gd_steps_1_tau_0.005_training_num_1_buffer_size_40000_c_net_128_3_a1_128_3_gamma_0.9999/noise_0.1_actor_lr_0.0001_critic_lr_0.001_batch_512_step_per_epoch_40000_kwargs_{}_seed_0/epoch_id_16/policy.pth")
+                        default=None)
     parser.add_argument("--rssm_ckpt_path", type=str, required=False,
                         help="Override Dreamer RSSM checkpoint (else read from YAML defaults).")
     parser.add_argument("--output_dir", type=str, default="eval",
@@ -122,6 +123,9 @@ def get_args():
         final_args.rssm_ckpt_path = config.rssm_ckpt_path
     if final_args.rssm_ckpt_path_override:
         final_args.rssm_ckpt_path = final_args.rssm_ckpt_path_override
+
+    if not final_args.model_path or not os.path.isfile(final_args.model_path):
+        parser.error("--model_path must point to the policy.pth saved by safety-filter training")
 
     print("---------------------")
     cprint(f"Experiment name: {config.expt_name}", "red", attrs=["bold"])
@@ -379,9 +383,8 @@ def dreamer_posterior_obsstep(cfg, wm, x0, heat0, K=5, use_no_heat=False):
     actions  = np.zeros((B, 1, 2), dtype=np.float32)
     is_first = np.zeros((B, 1), dtype=bool)
 
-    # initialize prior
+    # Carry the posterior forward, as RSSM.observe does during training.
     post_t = wm.dynamics.initial(B)
-    prior_t = post_t  # prior and post have same structure for t=0 boot
 
     for t in range(T):
         x, y, th, v = xs_seq[t]
@@ -407,7 +410,7 @@ def dreamer_posterior_obsstep(cfg, wm, x0, heat0, K=5, use_no_heat=False):
         act_t   = step["action"][:, 0]      # (B,2)
         first_t = step["is_first"][:, 0]    # (B,)
 
-        post_t, prior_t = wm.dynamics.obs_step(prior_t, embed_t, act_t, first_t)
+        post_t, _ = wm.dynamics.obs_step(post_t, act_t, embed_t, first_t)
 
     feat_T = wm.dynamics.get_feat(post_t)               # (B, D_feat)
     lz_T   = torch.tanh(wm.heads["margin"](feat_T))     # (B, 1?) or (B,)
@@ -440,10 +443,11 @@ def rollout_from_posts(cfg, wm, policy, posts, feats, states_xythv, heats0, T=10
     tmp_batch = Batch(obs=feats_t.detach().cpu().numpy(), info=Batch())
     V_vals = policy.critic(tmp_batch.obs, policy(tmp_batch, model="actor_old").act)
     if torch.is_tensor(V_vals): V_vals = V_vals.detach().cpu().numpy()
+    V_vals = np.asarray(V_vals).reshape(-1)
     lz_vals = []
     with torch.no_grad():
         lz_vals = torch.tanh(wm.heads["margin"](feats_t)).detach().cpu().numpy()
-    lz_vals = lz_vals.squeeze()
+    lz_vals = lz_vals.reshape(-1)
     combined = np.minimum(V_vals, lz_vals)
     vf_binary = combined > 1e-6
 
@@ -477,6 +481,7 @@ def rollout_from_posts(cfg, wm, policy, posts, feats, states_xythv, heats0, T=10
         for _ in range(T):
             # policy action in latent
             act = policy.actor(feat_b)[0]                 # (b,2)
+            act = policy_to_dynamics_action(act, cfg.turnRate)
             post_b = wm.dynamics.img_step(post_b, act)    # forward latent
             feat_b = wm.dynamics.get_feat(post_b).detach()
 
@@ -672,6 +677,7 @@ def rollout_dubins(config, wm, policy, lz, feat, post, states, heat_value_init, 
 
         for _ in range(T):
             act = policy.actor(feat_b)[0]
+            act = policy_to_dynamics_action(act, config.turnRate)
             post_b = wm.dynamics.img_step(post_b, act)
             feat_b = wm.dynamics.get_feat(post_b).detach()
 
@@ -742,7 +748,6 @@ def single_rollout(config, wm, policy, initial_conditions, T=100, target=None):
         device = config.device
         state = torch.tensor(ic[:4], dtype=torch.float32, device=device)
         x, y, theta, vel = state
-        omega = torch.tensor(0.0, dtype=torch.float32, device=device)
         dt = torch.tensor(config.dt, dtype=torch.float32, device=device)
         vehicle_heat = torch.tensor(ic[-1], dtype=torch.float32, device=device)
 
@@ -798,19 +803,17 @@ def single_rollout(config, wm, policy, initial_conditions, T=100, target=None):
                 heading_error = (desired_heading - theta + np.pi) % (2 * np.pi) - np.pi
                 nominal_turn = torch.clamp(heading_error / dt, -config.turnRate, config.turnRate)
                 nominal_accel = torch.tensor(0.0, device=device)
-                nominal_action = torch.stack([nominal_turn, nominal_accel])
+                nominal_action = torch.stack([nominal_turn / config.turnRate, nominal_accel])
                 value_nominal = policy.critic(feat_t.unsqueeze(0), nominal_action.unsqueeze(0))[0]
                 action = nominal_action if value_nominal > 0 else dreamer_action
             else:
                 action = dreamer_action
 
-            ang_accel, lin_accel = action[0], action[1]
-            omega += ang_accel * dt
-            theta += omega * dt
-            theta = (theta + np.pi) % (2 * np.pi) - np.pi
+            turn_rate, lin_accel = policy_to_dynamics_action(action, config.turnRate)
             vel = torch.clamp(vel + lin_accel * dt, 0.0, 1.0)
             x += vel * torch.cos(theta) * dt
             y += vel * torch.sin(theta) * dt
+            theta = (theta + turn_rate * dt + np.pi) % (2 * np.pi) - np.pi
             state = torch.stack([x, y, theta, vel])
 
             obstacle_mask = gen._get_mask()

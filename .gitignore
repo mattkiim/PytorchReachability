@@ -19,10 +19,17 @@ experiment_script/final_runs/new_new_backup
 
 traj_videos
 wandb/
-logs/
+/log/
+/logs
 wm_demos*.pkl
 test*
-cache/
+!/test/
+/test/*
+!/test/test_eval_posterior.py
+!/test/test_wm_training.py
+/cache
 train_data
 eval
 gt_dubins
+/REPRODUCTION.md
+/2510.06492v2.pdf

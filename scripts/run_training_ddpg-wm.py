@@ -31,6 +31,7 @@ from PyHJ.utils import TensorboardLogger, WandbLogger
 from PyHJ.utils.net.common import Net
 from PyHJ.utils.net.continuous import Actor, Critic
 import PyHJ.reach_rl_gym_envs as reach_rl_gym_envs
+from PyHJ.reach_rl_gym_envs.dubins_controls import policy_to_dynamics_action
 
 from termcolor import cprint
 from datetime import datetime
@@ -313,13 +314,14 @@ if args.continue_training_logdir is not None:
     # epoch = int(args.continue_training_logdir.split('_')[-9].split('_')[0])
     epoch = args.continue_training_epoch
 
-def save_best_fn(policy, epoch=epoch):
+def save_best_fn(policy, checkpoint_epoch=None):
+    if checkpoint_epoch is None:
+        checkpoint_epoch = epoch
+    checkpoint_dir = pathlib.Path(log_path) / f"epoch_id_{checkpoint_epoch}"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     torch.save(
-        policy.state_dict(), 
-        os.path.join(
-            log_path+"/epoch_id_{}".format(epoch),
-            "policy.pth"
-        )
+        policy.state_dict(),
+        checkpoint_dir / "policy.pth",
     )
 
 def stop_fn(mean_rewards):
@@ -572,6 +574,7 @@ def rollout_dubins(
         for _ in range(T):
             # ----------------- dynamics & control ----------------------
             act     = policy.actor(feat_b)[0]
+            act = policy_to_dynamics_action(act, config.turnRate)
             post_b  = wm.dynamics.img_step(post_b, act)
             feat_b  = wm.dynamics.get_feat(post_b).detach()
 
@@ -644,7 +647,6 @@ def single_rollout(initial_conditions, config, T=100, target=None):
         device = config.device
         state = torch.tensor(initial_condition[:4], dtype=torch.float32, device=device)  # (x, y, theta, vel)
         x, y, theta, vel = state
-        omega = torch.tensor(0.0, dtype=torch.float32, device=device)
         dt = torch.tensor(config.dt, dtype=torch.float32, device=device)
 
         vehicle_heat = torch.tensor(initial_condition[-1], dtype=torch.float32, device=device)
@@ -703,25 +705,21 @@ def single_rollout(initial_conditions, config, T=100, target=None):
                 nominal_turn = torch.clamp(nominal_turn, -config.turnRate, config.turnRate)
                 nominal_accel = torch.tensor(0.0, device=device)
 
-                nominal_action = torch.stack([nominal_turn, nominal_accel])
+                nominal_action = torch.stack([nominal_turn / config.turnRate, nominal_accel])
                 value_nominal = policy.critic(feat_tensor.unsqueeze(0), nominal_action.unsqueeze(0))[0]
 
                 action = nominal_action if value_nominal > 0 else dreamer_action
             else:
                 action = dreamer_action
 
-            ang_accel = action[0]
-            lin_accel = action[1]
-
-            omega += ang_accel * dt
-            theta += omega * dt
-            theta = (theta + np.pi) % (2 * np.pi) - np.pi
+            turn_rate, lin_accel = policy_to_dynamics_action(action, config.turnRate)
 
             vel += lin_accel * dt
             vel = torch.clamp(vel, min=0.0, max=1.0)
 
             x += vel * torch.cos(theta) * dt
             y += vel * torch.sin(theta) * dt
+            theta = (theta + turn_rate * dt + np.pi) % (2 * np.pi) - np.pi
 
             state = torch.stack([x, y, theta, vel])
             
@@ -1066,7 +1064,7 @@ for iter in range(warmup+args.total_episodes):
     logger=logger
     )
     
-    save_best_fn(policy, epoch=epoch)
+    save_best_fn(policy, checkpoint_epoch=epoch)
     plot1, plot2, plot3, plot4, plot5, plot6, plot7, traj_vid_path = get_eval_plot(cache, vels, heat_values)
     log_dict = {
         "eval/lz_continuous": wandb.Image(plot1),
@@ -1087,4 +1085,3 @@ for iter in range(warmup+args.total_episodes):
     
     policy.critic_scheduler.step()
     policy.actor_scheduler.step()
-

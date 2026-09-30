@@ -4,6 +4,8 @@
 
 This repository contains the Dubins car simulation code used to study how partial observability degrades latent-space safe control. We identify two failure modes — **estimation gaps** (safety state is unobservable) and **prediction gaps** (failures can't be anticipated) — and demonstrate mitigations using multimodal privileged supervision and conformal risk calibration.
 
+**Reproduction status:** the commands below have been checked with small simulation runs. They have not been verified to reproduce the paper's numerical results. The supplied v2 paper reports the simulation in Figure 5 and Tables 5–6; its main-text tables concern hardware.
+
 ---
 
 ## Setup
@@ -18,6 +20,8 @@ conda install -c conda-forge ffmpeg
 ```
 
 Dependencies: `torch==2.4.0`, `gymnasium==0.28.1`, `numpy==1.26.4`, `ruamel-yaml==0.17.40` (see `setup.py` for full list).
+
+Training logs to Weights & Biases. To keep logs local without signing in, run `export WANDB_MODE=offline` before training.
 
 ---
 
@@ -37,7 +41,7 @@ python scripts/generate_data_traj_cont.py --config_path configs/configs_po.yaml 
 python scripts/generate_data_traj_cont.py --config_path configs/configs_fo.yaml   # FO data
 ```
 
-This produces a `.pkl` dataset at the path specified by `dataset_path` in the config.
+This produces a dataset at `<dataset_path>_<heat_rate>.pkl` (for example, `train_data/po_6.pkl`). Ensure the parent directory exists and is writable.
 
 ### 2. Train World Model
 
@@ -47,6 +51,14 @@ python scripts/dreamer_offline.py --config_path configs/configs_fo.yaml   # FO w
 ```
 
 Trains a DreamerV3-style world model on the offline dataset. Checkpoints are saved to `logdir`.
+
+After the safety-head optimizer fix, retrain both RGB and MM world models in fresh
+log directories, then train fresh safety policies against those checkpoints.
+Earlier WM training excluded the margin and continuation head parameters from
+the optimizer. Policy training also used a different acceleration scale from
+evaluation; both now use the dataset's action units. Existing checkpoints are
+not updated by these source changes, and already-running jobs must be restarted
+to use them.
 
 ### 3. Train Safety Filter
 
@@ -60,14 +72,33 @@ Trains a least-restrictive safety filter (DDPG) in the world model's latent spac
 ### 4. Evaluate
 
 ```bash
-python scripts/eval_hj.py --config_path configs/configs_po.yaml   # main safety evaluation
+python scripts/eval_hj.py --config_path configs/configs_po.yaml \
+  --model_path path/to/epoch_id_16/policy.pth
 ```
 
 Produces safety visualizations and metrics over the state space.
 
+Replace `path/to/epoch_id_16/policy.pth` with a checkpoint from the safety-filter training log directory. Use the matching config and world-model checkpoint; the script does not select a policy automatically. If the HJ cache is missing, add `--make_cache_if_missing`.
+
 ---
 
 ## Diagnostics
+
+### World-model visual evaluation
+
+Export an interactive HTML viewer, GIFs and contact sheets showing actual frames, reconstructions, open-loop predictions and absolute RGB errors:
+
+```bash
+python scripts/visualize_wm.py \
+  --config_path configs/configs_po.yaml \
+  --checkpoint logs/po/rssm_ckpt.pt \
+  --dataset train_data/po_6.pkl \
+  --modality mm --num_train_trajs 5600 \
+  --history 5 --horizon 16 \
+  --output_dir eval/po_wm_visual
+```
+
+Open `eval/po_wm_visual/index.html` in a browser. Use `--modality rgb` for a checkpoint trained with `--no_heat True`. Set `--num_train_trajs` to the split used during training; the viewer selects the first three sufficiently long held-out trajectories. It displays the recorded checkpoint step and uses the same action alignment as the training video diagnostic. These qualitative examples do not establish safety performance.
 
 ### Mutual Information (Section 4, Table 1)
 

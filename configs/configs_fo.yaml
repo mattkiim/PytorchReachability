@@ -25,6 +25,7 @@ defaults:
   # offline dreamer parameters, these are from https://github.com/NM512/dreamerv3-torch
   logdir: 'logs/fo_priv_heat'
   rssm_ckpt_path: logs/fo_priv_heat/rssm_ckpt.pt
+  no_heat: False
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -180,3 +181,4 @@ defaults:
   include_no_heat_vis: False
   obs_priv_heat: False
   use_pil: True
+  include_outline: False

@@ -9,6 +9,7 @@ from PIL import Image
 import matplotlib.patches as patches
 import torch
 import math
+from PyHJ.reach_rl_gym_envs.dubins_controls import policy_to_dynamics_action
 
 class Dubins_WM_Env(gym.Env):
     # TODO: 1. baseline over approximation; 2. our critic loss drop faster 
@@ -69,9 +70,7 @@ class Dubins_WM_Env(gym.Env):
         init = {k: v[:, -1] for k, v in self.latent.items()}
         # for k, v in init.items():
         # quit()
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        steer = action[0] * self.turnRate  # [-turnRate, +turnRate]
-        accel = action[1] * 0.2  # scale acceleration (tune as needed)
+        steer, accel = policy_to_dynamics_action(action, self.turnRate)
 
         action_tensor = torch.tensor([[[steer, accel]]], dtype=torch.float32).to(self.device) # 
         action_tensor = action_tensor.view(1, 1, -1)  # [time=1, batch=1, dim=2]

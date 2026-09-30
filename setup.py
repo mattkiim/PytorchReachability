@@ -30,7 +30,9 @@ def get_install_requires() -> str:
         "ipykernel",
         "ruamel-yaml==0.17.40",
         "termcolor",
-        "moviepy==1.0.3"
+        "moviepy==1.0.3",
+        "wandb>=0.12.0",
+        "opencv-python>=4.7.0.72",
     ]
 
 

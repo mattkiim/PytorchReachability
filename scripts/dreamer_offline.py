@@ -159,7 +159,7 @@ class Dreamer(nn.Module):
         use_amp = True if config.precision == 16 else False
         if (
             config.rssm_train_steps > 0
-            or config.from_ckpt is not None
+            or getattr(config, "from_ckpt", None) is not None
         ):
             # have separate lrs/eps/clips for actor and model
             # https://pytorch.org/docs/master/optim.html#per-parameter-options
@@ -176,19 +176,17 @@ class Dreamer(nn.Module):
                 + list(self._wm.dynamics.parameters())
             }
             model_params["params"] += list(self._wm.heads["decoder"].parameters())
-            actor_params = {
-                "params": list(self._task_behavior.actor.parameters()),
-                "lr": config.actor["lr"],
-                "eps": config.actor["eps"],
-                "clip": config.actor["grad_clip"],
+            model_params["params"] += list(self._wm.heads["cont"].parameters())
+            margin_params = {
+                "params": list(self._wm.heads["margin"].parameters()),
+                "lr": config.lx_lr,
             }
             self.pretrain_params = list(model_params["params"]) + list(
-                actor_params["params"]
+                margin_params["params"]
             )
             self.pretrain_opt = tools.Optimizer(
-                "pretrain_opt", [model_params, actor_params], **standard_kwargs
+                "pretrain_opt", [model_params, margin_params], **standard_kwargs
             )
-            self.actor_params = list(self._task_behavior.actor.parameters())
             
             print(
                 f"Optimizer pretrain has {sum(param.numel() for param in self.pretrain_params)} variables."
@@ -223,10 +221,9 @@ class Dreamer(nn.Module):
     def pretrain_model_only(self, data, step=None):
         metrics = {}
         wm = self._wm
-        actor = self._task_behavior.actor
         data = wm.preprocess(data)
         
-        with tools.RequiresGrad(wm), tools.RequiresGrad(actor):
+        with tools.RequiresGrad(wm):
             with torch.amp.autocast("cuda", enabled=wm._use_amp):
                 embed = wm.encoder(data)
                 # post: z_t, prior: \hat{z}_t
