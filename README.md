@@ -4,7 +4,7 @@
 
 This repository contains the Dubins car simulation code used to study how partial observability degrades latent-space safe control. We identify two failure modes — **estimation gaps** (safety state is unobservable) and **prediction gaps** (failures can't be anticipated) — and demonstrate mitigations using multimodal privileged supervision and conformal risk calibration.
 
-**Reproduction status:** the commands below have been checked with small simulation runs. They have not been verified to reproduce the paper's numerical results. The supplied v2 paper reports the simulation in Figure 5 and Tables 5–6; its main-text tables concern hardware.
+<!-- **Reproduction status:** the commands below have been checked with small simulation runs. They have not been verified to reproduce the paper's numerical results. The supplied v2 paper reports the simulation in Figure 5 and Tables 5–6; its main-text tables concern hardware. -->
 
 ---
 
