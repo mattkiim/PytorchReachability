@@ -2,9 +2,7 @@
 
 **Paper:** [arXiv 2510.06492](https://arxiv.org/abs/2510.06492) — Matthew Kim, Kensuke Nakamura, Andrea Bajcsy (CoRL 2026)
 
-This repository contains the Dubins car simulation code used to study how partial observability degrades latent-space safe control. We identify two failure modes — **estimation gaps** (safety state is unobservable) and **prediction gaps** (failures can't be anticipated) — and demonstrate mitigations using multimodal privileged supervision and conformal risk calibration.
-
-<!-- **Reproduction status:** the commands below have been checked with small simulation runs. They have not been verified to reproduce the paper's numerical results. The supplied v2 paper reports the simulation in Figure 5 and Tables 5–6; its main-text tables concern hardware. -->
+This repository contains the Thermal Unicycle simulation code (paper Appendix 8.2) used to study how partial observability degrades latent-space safe control. We identify two failure modes — **estimation gaps** (safety state is unobservable) and **prediction gaps** (failures can't be anticipated) — and demonstrate mitigations using multimodal privileged supervision and conformal risk calibration.
 
 ---
 
@@ -27,17 +25,21 @@ Training logs to Weights & Biases. To keep logs local without signing in, run `e
 
 ## Simulation Pipeline
 
-The Dubins car environment simulates a vehicle navigating around a circular obstacle. The vehicle accumulates "heat" (a safety-relevant quantity) while inside the unsafe region. Two observability conditions are studied:
+The Thermal Unicycle environment simulates a vehicle that can drive into a circular hot region. The vehicle accumulates heat (the safety-relevant quantity) while inside the region and is unsafe when heat exceeds 0.8. Each trajectory records paired RGB and IR observations. RGB hides the current heat while the vehicle is inside the region (an *estimation gap*); IR shows it directly.
 
-- **PO (partial observability):** heat is hidden from the RGB observation while the vehicle is inside the obstacle — an *estimation gap*
-- **FO (full observability):** heat is always visible in the observation — the upper-bound baseline
+The paper (Appendix 8.2, Figure 5, Tables 5–6) compares two world models trained on the same dataset:
+
+- **RGB+IR (WM<sub>MM</sub>):** `configs_po.yaml`
+- **RGB-only (WM<sub>RGB</sub>):** `configs_po_no_heat.yaml` (same data; the IR channel is withheld from the model)
+
+`configs_fo.yaml` is an additional full-observability setting (heat always visible in RGB) that is not reported in the paper.
 
 The pipeline has four steps:
 
 ### 1. Generate Data
 
 ```bash
-python scripts/generate_data_traj_cont.py --config_path configs/configs_po.yaml   # PO data
+python scripts/generate_data_traj_cont.py --config_path configs/configs_po.yaml   # shared RGB+IR / RGB-only data
 python scripts/generate_data_traj_cont.py --config_path configs/configs_fo.yaml   # FO data
 ```
 
@@ -46,7 +48,8 @@ This produces a dataset at `<dataset_path>_<heat_rate>.pkl` (for example, `train
 ### 2. Train World Model
 
 ```bash
-python scripts/dreamer_offline.py --config_path configs/configs_po.yaml   # PO world model
+python scripts/dreamer_offline.py --config_path configs/configs_po.yaml          # RGB+IR world model
+python scripts/dreamer_offline.py --config_path configs/configs_po_no_heat.yaml   # RGB-only world model
 python scripts/dreamer_offline.py --config_path configs/configs_fo.yaml   # FO world model
 ```
 
@@ -63,7 +66,8 @@ to use them.
 ### 3. Train Safety Filter
 
 ```bash
-python scripts/run_training_ddpg-wm.py --config_path configs/configs_po.yaml   # PO safety filter
+python scripts/run_training_ddpg-wm.py --config_path configs/configs_po.yaml          # RGB+IR safety filter
+python scripts/run_training_ddpg-wm.py --config_path configs/configs_po_no_heat.yaml   # RGB-only safety filter
 python scripts/run_training_ddpg-wm.py --config_path configs/configs_fo.yaml   # FO safety filter
 ```
 
@@ -93,14 +97,14 @@ python scripts/visualize_wm.py \
   --config_path configs/configs_po.yaml \
   --checkpoint logs/po/rssm_ckpt.pt \
   --dataset train_data/po_6.pkl \
-  --modality mm --num_train_trajs 5600 \
+  --modality mm --num_train_trajs 3800 \
   --history 5 --horizon 16 \
   --output_dir eval/po_wm_visual
 ```
 
 Open `eval/po_wm_visual/index.html` in a browser. Use `--modality rgb` for a checkpoint trained with `--no_heat True`. Set `--num_train_trajs` to the split used during training; the viewer selects the first three sufficiently long held-out trajectories. It displays the recorded checkpoint step and uses the same action alignment as the training video diagnostic. These qualitative examples do not establish safety performance.
 
-### Mutual Information (Section 4, Table 1)
+### Mutual Information (Section 4; simulation results in Appendix 8.2, Table 5)
 
 Quantifies how much safety-relevant information is encoded in the latent state:
 
@@ -109,7 +113,7 @@ python scripts/eval_world_model.py --config_path configs/configs_po_info_theory.
 python scripts/dreamer_info_theory.py
 ```
 
-### Open-Loop Rollout Prediction (Section 4, Table 2)
+### Safety Classification and Open-Loop Prediction (Appendix 8.2, Table 6)
 
 Evaluates whether the world model can predict downstream safety outcomes:
 
@@ -125,10 +129,10 @@ Each config corresponds to a specific experiment from the paper:
 
 | Config | Experiment |
 |---|---|
-| `configs_po.yaml` | PO main experiment (estimation gap) |
-| `configs_fo.yaml` | FO baseline (full observability); pass `--obs_priv_heat True` to enable privileged heat supervision (Section 5.1) |
-| `configs_po_no_heat.yaml` | Ablation: no heat channel in observation |
-| `configs_po_info_theory.yaml` | MI diagnostic (Section 4), smaller dataset |
+| `configs_po.yaml` | RGB+IR world model (WM<sub>MM</sub>) |
+| `configs_fo.yaml` | Full-observability setting, not reported in the paper; pass `--obs_priv_heat True` to enable privileged heat supervision |
+| `configs_po_no_heat.yaml` | RGB-only world model (WM<sub>RGB</sub>); shares the `configs_po.yaml` dataset |
+| `configs_po_info_theory.yaml` | MI diagnostic (Section 4, Table 5), smaller dataset |
 
 Key parameters to set per run:
 - `dataset_path` — path to generated trajectory data
@@ -156,7 +160,7 @@ python scripts/run_training_sac_RA_nodist.py \
 ```
 configs/          experiment configs (one per paper experiment)
 dreamerv3-torch/  world model (DreamerV3 implementation)
-PyHJ/             reachability RL library and Dubins car environments
+PyHJ/             reachability RL library and Thermal Unicycle (Dubins) environments
 scripts/
   generate_data_traj_cont.py        data generation (main)
   generate_data_traj_cont_boundary.py  data generation near safe set boundary

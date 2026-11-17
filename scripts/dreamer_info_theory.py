@@ -119,14 +119,11 @@ class FrameDataset(torch.utils.data.Dataset):
 # -------------------
 # Classifier
 # -------------------
-class MLPClassifier(nn.Module):
-    def __init__(self, in_dim, hidden=256, num_classes=2):
+class LinearProbe(nn.Module):
+    """Linear probe on WM embeddings (paper Sec. 4)."""
+    def __init__(self, in_dim, num_classes=2):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, num_classes)
-        )
+        self.net = nn.Linear(in_dim, num_classes)
     def forward(self, x): return self.net(x)
 
 
@@ -184,7 +181,7 @@ class ModelWithTemperature(nn.Module):
 def train_and_eval(encoder_fn, enc_dim, train_loader, calib_loader, eval_loader, device, tag):
     print(f"\n==== Training {tag} classifier ====")
 
-    clf = MLPClassifier(enc_dim).to(device)
+    clf = LinearProbe(enc_dim).to(device)
     opt = optim.Adam(clf.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
 

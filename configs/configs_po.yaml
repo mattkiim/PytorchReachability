@@ -14,8 +14,8 @@ defaults:
 
   # offline data parameters
   data_length: 100
-  num_trajs: 6000 ## 4000 in paper
-  num_train_trajs: 5600 ## 3800 in paper
+  num_trajs: 4000 ## 4000 in paper
+  num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
   dataset_path: 'train_data/po'
   wm_cache_path: 'cache/wm/po'

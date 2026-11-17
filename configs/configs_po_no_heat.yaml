@@ -17,7 +17,7 @@ defaults:
   num_trajs: 4000 ## 4000 in paper
   num_train_trajs: 3800 ## 3800 in paper
   size: [128, 128]
-  dataset_path: 'train_data/po_no_heat'
+  dataset_path: 'train_data/po'  # same data as configs_po.yaml; no_heat withholds IR from the model
   wm_cache_path: 'cache/wm/po_no_heat'
   hj_cache_path: 'cache/hj/po_no_heat'
   ground_truth_path: 'gt_dubins/value_function_theta_v_heat_slices'
